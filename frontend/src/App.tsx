@@ -53,6 +53,8 @@ function App() {
   const [editServerAliases, setEditServerAliases] = useState('')
   const [editLoading, setEditLoading] = useState(false)
   const [editSaving, setEditSaving] = useState(false)
+  const [editModalOpen, setEditModalOpen] = useState(false)
+  const [editError, setEditError] = useState('')
 
   const loadStatus = useCallback(async () => {
     setStatusLoading(true)
@@ -139,8 +141,13 @@ function App() {
       setLoginLoading(false)
     }
   }
-  async function handleOpenEditVHost(domain: string) {
+  const handleOpenEditVHost = async (domain: string) => {
     setError('')
+    setEditError('')
+    setEditingVHost(null)
+    setEditDocumentRoot('')
+    setEditServerAliases('')
+    setEditModalOpen(true)
     setEditLoading(true)
 
     try {
@@ -150,7 +157,9 @@ function App() {
       setEditDocumentRoot(response.vhost.document_root)
       setEditServerAliases(response.vhost.server_aliases.join('\n'))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load VirtualHost')
+      setEditError(
+          err instanceof Error ? err.message : 'Failed to load VirtualHost details'
+      )
     } finally {
       setEditLoading(false)
     }
@@ -158,6 +167,7 @@ function App() {
 
   async function handleSaveEditVHost(event: FormEvent) {
     event.preventDefault()
+    setEditError('')
 
     if (!editingVHost) return
 
@@ -177,12 +187,15 @@ function App() {
       )
 
       showNotice(`VirtualHost ${editingVHost.domain} updated successfully`)
+      setEditModalOpen(false)
       setEditingVHost(null)
 
       await loadVHosts()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not update VirtualHost')
-    } finally {
+      setEditError(
+          err instanceof Error ? err.message : 'Failed to save VirtualHost'
+      )
+    }finally {
       setEditSaving(false)
     }
   }
@@ -604,11 +617,15 @@ function App() {
           </section>
         )}
       </main>
-      {editingVHost && (
+      {editModalOpen && (
           <div
               className="modal-overlay"
               onClick={() => {
-                if (!editSaving) setEditingVHost(null)
+                if (!editSaving) {
+                  setEditModalOpen(false)
+                  setEditingVHost(null)
+                  setEditError('')
+                }
               }}
           >
             <div
@@ -618,67 +635,89 @@ function App() {
               <div className="modal-header">
                 <div>
                   <h2>Edit VirtualHost</h2>
-                  <p>{editingVHost.domain}</p>
+                  <p>
+                    {editingVHost?.domain || 'Loading VirtualHost...'}
+                  </p>
                 </div>
 
                 <button
                     className="icon-button"
                     type="button"
                     disabled={editSaving}
-                    onClick={() => setEditingVHost(null)}
+                    onClick={() => {
+                      setEditModalOpen(false)
+                      setEditingVHost(null)
+                      setEditError('')
+                    }}
                 >
                   ×
                 </button>
               </div>
 
               {editLoading ? (
-                  <div className="empty-state">
-                    Loading VirtualHost details...
+                  <div className="edit-loading">
+                    <RefreshCw className="spin" size={24} />
+                    <p>Loading VirtualHost details...</p>
                   </div>
-              ) : (
-                  <form onSubmit={handleSaveEditVHost}>
-                    <label>Document Root</label>
-                    <input
-                        value={editDocumentRoot}
-                        onChange={event => setEditDocumentRoot(event.target.value)}
-                        placeholder="/var/www/example.com"
-                        required
-                        disabled={editSaving}
-                    />
-
-                    <label>Server Aliases</label>
-                    <textarea
-                        value={editServerAliases}
-                        onChange={event => setEditServerAliases(event.target.value)}
-                        placeholder={'www.example.com\nblog.example.com'}
-                        rows={4}
-                        disabled={editSaving}
-                    />
-
-                    <p className="modal-hint">
-                      Enter one alias per line or separate aliases with spaces or commas.
-                    </p>
-
-                    <div className="modal-actions">
-                      <button
-                          type="button"
-                          className="secondary"
+              ) : editError ? (
+                  <div className="alert error">
+                    <CircleAlert size={18} />
+                    <span>{editError}</span>
+                  </div>
+              ) : editingVHost ? (
+                  <>
+                    <form onSubmit={handleSaveEditVHost}>
+                      <label>Document Root</label>
+                      <input
+                          value={editDocumentRoot}
+                          onChange={event =>
+                              setEditDocumentRoot(event.target.value)
+                          }
+                          placeholder="/var/www/example.com"
+                          required
                           disabled={editSaving}
-                          onClick={() => setEditingVHost(null)}
-                      >
-                        Cancel
-                      </button>
+                      />
 
-                      <button
-                          type="submit"
-                          className="primary"
+                      <label>Server Aliases</label>
+                      <textarea
+                          value={editServerAliases}
+                          onChange={event =>
+                              setEditServerAliases(event.target.value)
+                          }
+                          placeholder={'www.example.com\nblog.example.com'}
+                          rows={4}
                           disabled={editSaving}
-                      >
-                        {editSaving ? 'Saving...' : 'Save Changes'}
-                      </button>
-                    </div>
-                  </form>
-              )}
+                      />
+
+                      <p className="modal-hint">
+                        Enter one alias per line or separate aliases with spaces or commas.
+                      </p>
+
+                      <div className="modal-actions">
+                        <button
+                            type="button"
+                            className="secondary"
+                            disabled={editSaving}
+                            onClick={() => {
+                              setEditModalOpen(false)
+                              setEditingVHost(null)
+                              setEditError('')
+                            }}
+                        >
+                          Cancel
+                        </button>
+
+                        <button
+                            type="submit"
+                            className="primary"
+                            disabled={editSaving}
+                        >
+                          {editSaving ? 'Saving...' : 'Save Changes'}
+                        </button>
+                      </div>
+                    </form>
+                  </>
+              ) : null}
             </div>
           </div>
       )}
