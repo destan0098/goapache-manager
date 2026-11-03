@@ -53,6 +53,7 @@ func NewRouter(db *sql.DB) http.Handler {
 			apacheAPI.DisableVHost,
 		)
 		p.Put("/api/v1/apache/vhosts/{domain}", apacheAPI.EditVHost)
+		p.Delete("/api/v1/apache/vhosts/{domain}", apacheAPI.DeleteVHost)
 		p.Post("/api/v1/auth/logout", authAPI.Logout)
 		p.Get("/api/v1/auth/me", authAPI.Me)
 

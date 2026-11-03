@@ -562,6 +562,165 @@ func editVHost(
 	), nil
 }
 
+func deleteVHost(
+	ctx context.Context,
+	rawDomain string,
+) (string, error) {
+	if _, err := os.Stat("/etc/apache2"); err != nil {
+		return "", fmt.Errorf("this operation currently supports Debian/Ubuntu only")
+	}
+
+	domain := strings.ToLower(strings.TrimSpace(rawDomain))
+	if len(domain) == 0 || len(domain) > 253 ||
+		!domainPattern.MatchString(domain) || domain == "localhost" {
+		return "", fmt.Errorf("invalid domain name")
+	}
+
+	sitesAvailable := "/etc/apache2/sites-available"
+	sitesEnabled := "/etc/apache2/sites-enabled"
+
+	for _, dir := range []string{sitesAvailable, sitesEnabled} {
+		info, err := os.Lstat(dir)
+		if err != nil {
+			return "", err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("unsafe directory: %s", dir)
+		}
+	}
+
+	filename := domain + ".conf"
+	configPath := filepath.Join(sitesAvailable, filename)
+	enabledPath := filepath.Join(sitesEnabled, filename)
+
+	// Only delete configurations managed by GoApache Manager.
+	info, err := os.Lstat(configPath)
+	if err != nil {
+		return "", fmt.Errorf("configuration not found: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("configuration is not a regular file")
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", err
+	}
+
+	marker := "# Managed by GoApache Manager: " + domain
+	firstLine := strings.SplitN(string(content), "\n", 2)[0]
+	if firstLine != marker {
+		return "", fmt.Errorf("configuration is not managed by GoApache Manager")
+	}
+
+	// Inspect the enabled path without following symlinks.
+	enabledInfo, enabledErr := os.Lstat(enabledPath)
+	isEnabled := enabledErr == nil
+
+	if enabledErr != nil && !errors.Is(enabledErr, os.ErrNotExist) {
+		return "", fmt.Errorf("inspect enabled path: %w", enabledErr)
+	}
+
+	expectedTarget := "../sites-available/" + filename
+
+	if isEnabled {
+		if enabledInfo.Mode()&os.ModeSymlink == 0 {
+			return "", fmt.Errorf("enabled path exists but is not a symlink")
+		}
+
+		target, err := os.Readlink(enabledPath)
+		if err != nil {
+			return "", err
+		}
+		if target != expectedTarget {
+			return "", fmt.Errorf("enabled path is not the expected GoApache symlink")
+		}
+	}
+
+	// Reserve a unique backup path.
+	backupPath := configPath + ".deleted-" +
+		time.Now().UTC().Format("20060102T150405.000000000")
+
+	// Remove the enabled symlink first.
+	if isEnabled {
+		if err := os.Remove(enabledPath); err != nil {
+			return "", fmt.Errorf("disable VirtualHost: %w", err)
+		}
+	}
+
+	// Move the original configuration to its backup path.
+	if err := os.Rename(configPath, backupPath); err != nil {
+		if isEnabled {
+			_ = os.Symlink(expectedTarget, enabledPath)
+		}
+		return "", fmt.Errorf("backup configuration: %w", err)
+	}
+
+	// Restore the original state if validation or reload fails.
+	rollback := func() error {
+		var rollbackErrors []error
+
+		if err := os.Rename(backupPath, configPath); err != nil {
+			rollbackErrors = append(rollbackErrors, err)
+		}
+
+		if isEnabled {
+			if err := os.Symlink(expectedTarget, enabledPath); err != nil {
+				rollbackErrors = append(rollbackErrors, err)
+			}
+		}
+
+		rollbackCtx, cancel := context.WithTimeout(
+			context.Background(),
+			20*time.Second,
+		)
+		defer cancel()
+
+		if _, err := runApacheCommand(rollbackCtx, "-t"); err == nil {
+			if _, err := runSystemctl(
+				rollbackCtx,
+				"reload",
+				apacheService(),
+			); err != nil {
+				rollbackErrors = append(rollbackErrors, err)
+			}
+		}
+
+		return errors.Join(rollbackErrors...)
+	}
+
+	testOutput, err := runApacheCommand(ctx, "-t")
+	if err != nil {
+		rollbackErr := rollback()
+		return testOutput, fmt.Errorf(
+			"apache configtest failed: %w (rollback: %v)",
+			err,
+			rollbackErr,
+		)
+	}
+
+	reloadOutput, err := runSystemctl(
+		ctx,
+		"reload",
+		apacheService(),
+	)
+	if err != nil {
+		rollbackErr := rollback()
+		return reloadOutput, fmt.Errorf(
+			"apache reload failed: %w (rollback: %v)",
+			err,
+			rollbackErr,
+		)
+	}
+
+	return fmt.Sprintf(
+		"VirtualHost deleted successfully\nDomain: %s\nBackup: %s\nDocumentRoot was preserved.\n%s",
+		domain,
+		backupPath,
+		testOutput,
+	), nil
+}
+
 func runApacheCommand(
 	ctx context.Context,
 	args ...string,
@@ -783,6 +942,8 @@ func executeRequest(
 			req.DocumentRoot,
 			req.ServerAliases,
 		)
+	case "apache.vhost.delete":
+		return deleteVHost(ctx, req.Domain)
 	default:
 		return execute(ctx, req.Action)
 	}

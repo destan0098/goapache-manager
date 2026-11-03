@@ -87,6 +87,16 @@ func (c *Client) EditVHost(
 	})
 }
 
+func (c *Client) DeleteVHost(
+	ctx context.Context,
+	domain string,
+) (*Response, error) {
+	return c.executeRequest(ctx, Request{
+		Action: "apache.vhost.delete",
+		Domain: domain,
+	})
+}
+
 func (c *Client) executeRequest(
 	ctx context.Context,
 	request Request,
@@ -102,6 +112,7 @@ func (c *Client) executeRequest(
 		"apache.vhost.enable":  true,
 		"apache.vhost.disable": true,
 		"apache.vhost.edit":    true,
+		"apache.vhost.delete":  true,
 	}
 
 	if !allowed[request.Action] {

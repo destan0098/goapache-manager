@@ -289,7 +289,7 @@ func (a *ApacheAPI) setVHostEnabled(
 }
 
 func (a *ApacheAPI) EditVHost(w http.ResponseWriter, r *http.Request) {
-	user, ok := auth.CurrentUser(r.Context())
+	user, ok := auth.CurrentUser(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -352,6 +352,40 @@ func (a *ApacheAPI) EditVHost(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"domain":  domain,
 		"message": "VirtualHost updated successfully",
+		"output":  resultOutput(result),
+	})
+}
+func (a *ApacheAPI) DeleteVHost(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.CurrentUser(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if user.Role != "admin" && user.Role != "operator" {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	domain := chi.URLParam(r, "domain")
+	if strings.TrimSpace(domain) == "" {
+		http.Error(w, "Invalid domain", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
+	defer cancel()
+
+	result, err := a.Helper.DeleteVHost(ctx, domain)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"domain":  domain,
+		"message": "VirtualHost deleted successfully",
 		"output":  resultOutput(result),
 	})
 }
