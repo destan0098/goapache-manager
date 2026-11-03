@@ -140,7 +140,7 @@ systemctl enable goapache.service goapache-helper.service
 
 echo "[6/9] Publishing frontend..."
 
-rm -rf "${WEB_DIR:?}/"*
+find "${WEB_DIR:?}" -mindepth 1 -delete
 cp -a ./frontend/dist/. "$WEB_DIR/"
 find "$WEB_DIR" -type d -exec chmod 0755 {} +
 find "$WEB_DIR" -type f -exec chmod 0644 {} +
@@ -159,6 +159,7 @@ if [[ -z "$PANEL_DOMAIN" && -t 0 ]]; then
     echo "Enter the domain or server name for the panel, e.g. panel.example.com"
     echo "(leave empty to skip; you can configure the vhost manually later)."
     read -r -p "Panel domain: " PANEL_DOMAIN
+    PANEL_DOMAIN="$(echo "$PANEL_DOMAIN" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 fi
 
 case "${PANEL_DOMAIN,,}" in
@@ -265,8 +266,12 @@ echo "Apache config:  $APACHE_CONFIG"
 echo "Backend:        127.0.0.1:9090 (loopback only)"
 echo "Panel files:    $WEB_DIR"
 echo
-echo "Create the administrator account (first install only):"
-echo "  sudo -u $APP_USER $INSTALL_DIR/goapache --create-admin"
+if [[ "${CREATE_ADMIN:-0}" == "1" ]]; then
+    echo "Administrator account: created"
+else
+    echo "Create the administrator account (first install only):"
+    echo "  sudo -u $APP_USER $INSTALL_DIR/goapache --create-admin"
+fi
 echo
 
 if [[ "${PANEL_CONFIGURED:-0}" == "1" ]]; then
