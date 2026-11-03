@@ -133,71 +133,59 @@ cd ..
 
 This produces `frontend/dist/` — a static site (React SPA + assets).
 
-### Step 4 — Run the installer (backend service)
+### Step 4 — Run the installer (everything in one go)
 
-The installer must run from the repository root. It is safe to re-run (it will not overwrite an existing `config.yaml`).
+From anywhere (the script locates the repository root itself):
 
 ```bash
 sudo bash scripts/install.sh
 ```
 
-It will:
+It is safe to re-run — it reinstalls the binaries, republishes the frontend and restarts the services.
 
-1. Verify the OS is Debian/Ubuntu-family and Apache is installed.
-2. Create the `goapache` system group/user (nologin shell).
-3. Create `/opt/goapache`, `/etc/goapache`, `/var/lib/goapache` (0750, owned by `goapache`), `/var/lib/goapache/backups`, `/var/log/goapache`.
-4. Install the backend binary to `/opt/goapache/goapache`.
-5. Write `/etc/goapache/config.yaml` (reference/future use — see [Configuration](#configuration)).
-6. Install and enable `goapache.service` and start it.
+What it does:
 
-Verify it is up:
+1. Verifies the OS is Debian/Ubuntu and Apache is installed (the helper requires the `/etc/apache2` layout; other distributions are rejected with a clear error).
+2. Creates the `goapache` system group/user (nologin shell).
+3. Creates `/opt/goapache`, `/etc/goapache`, `/var/lib/goapache` (0750, owned by `goapache`), `/var/lib/goapache/backups`, `/var/log/goapache`, `/var/www/goapache`.
+4. Installs `goapache` and `goapache-helper` to `/opt/goapache/`.
+5. Writes `/etc/goapache/config.yaml` if missing (reference/future use — see [Configuration](#configuration)).
+6. Installs and enables both systemd units (`goapache.service`, `goapache-helper.service`) and (re)starts them.
+7. Publishes the frontend build to `/var/www/goapache` with safe permissions and enables Apache `proxy`/`proxy_http`.
+8. Creates the panel VirtualHost on port 80 — interactively, or from the `PANEL_DOMAIN` variable; a pre-existing `goapache.conf` is backed up first, and Apache is reloaded only after a successful `apache2ctl configtest` (on failure the site is removed again).
+9. Verifies the installation (API health check, helper socket) and offers to create the administrator account.
+
+Non-interactive install (automation):
 
 ```bash
-systemctl status goapache
+sudo PANEL_DOMAIN=panel.example.com bash scripts/install.sh   # create the panel vhost too
+sudo PANEL_DOMAIN=skip SKIP_ADMIN=1 bash scripts/install.sh    # binaries + services only
+```
+
+During an interactive run you are asked for:
+
+- the **panel domain** (empty = skip; Apache vhost not touched),
+- whether to **create the administrator account** now.
+
+Verify the installation:
+
+```bash
+systemctl status goapache goapache-helper
 curl -s http://127.0.0.1:9090/api/v1/health   # {"status":"ok"}
+ls -l /run/goapache/helper.sock               # srw-rw---- root goapache
 ```
 
-### Step 5 — Install the privileged helper
+Notes:
 
-The helper is **not** installed by `install.sh` and must be installed separately. It runs as root and owns all Apache-mutating operations.
+- The panel VirtualHost is **not** managed by GoApache Manager (no ownership marker) and is never listed as editable/deletable in the UI — that is intentional.
+- To configure the panel later, re-run `sudo PANEL_DOMAIN=panel.example.com bash scripts/install.sh`, or create the vhost manually as described below.
+- There are no default credentials. If you skipped creating the admin during install, run:
+  ```bash
+  sudo -u goapache /opt/goapache/goapache --create-admin
+  ```
+  (as the `goapache` user, so the database keeps the right ownership; you will be prompted for a 3–64 character username and a strong password — bcrypt input limit is 72 bytes. A root-created database would not be writable by the service.)
 
-```bash
-sudo install -o root -g root -m 0755 goapache-helper /opt/goapache/goapache-helper
-sudo install -o root -g root -m 0644 packaging/systemd/goapache-helper.service /etc/systemd/system/goapache-helper.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now goapache-helper
-systemctl status goapache-helper
-ls -l /run/goapache/helper.sock     # srw-rw---- 1 root goapache
-```
-
-The helper refuses to start if the `goapache` system user does not exist (Step 4 creates it), and it only listens on the socket — it never opens a network port.
-
-### Step 6 — Create the administrator account
-
-There are no default credentials. Create the first admin interactively **as the `goapache` user** so the database keeps the right ownership (the panel reads/writes `/var/lib/goapache/goapache.db`):
-
-```bash
-sudo -u goapache /opt/goapache/goapache --create-admin
-```
-
-You will be prompted for an admin username (3–64 characters) and password (choose a strong one; the bcrypt input limit is 72 bytes). Only one admin can be created this way; an error is returned if one already exists.
-
-> Do **not** run this as root. A root-created `goapache.db` will not be writable by the `goapache` service and the panel will fail to start. If you already did, fix it with:
-> ```bash
-> sudo chown -R goapache:goapache /var/lib/goapache
-> ```
-
-### Step 7 — Serve the panel through Apache
-
-The backend does not serve the frontend; serve it as a static site on a dedicated Apache VirtualHost and proxy `/api` to the backend.
-
-```bash
-sudo mkdir -p /var/www/goapache
-sudo cp -r frontend/dist/. /var/www/goapache/
-sudo a2enmod proxy proxy_http
-```
-
-Create `/etc/apache2/sites-available/goapache.conf` (replace `panel.example.com` with your domain or server name):
+Manually, the steps above are equivalent to installing `packaging/systemd/goapache.service` and `goapache-helper.service`, copying `frontend/dist/` to `/var/www/goapache`, enabling `proxy`/`proxy_http`, and writing:
 
 ```apache
 <VirtualHost *:80>
@@ -220,18 +208,9 @@ Create `/etc/apache2/sites-available/goapache.conf` (replace `panel.example.com`
 </VirtualHost>
 ```
 
-`FallbackResource` makes client-side routes work (e.g. refreshing on a sub-page). Enable the site and reload Apache:
+`FallbackResource` makes client-side routes work (e.g. refreshing on a sub-page). If Apache's default site answers instead, give the panel vhost a unique `ServerName`, or disable the default: `sudo a2dissite 000-default && sudo systemctl reload apache2`.
 
-```bash
-sudo a2ensite goapache
-sudo systemctl reload apache2
-```
-
-> If Apache's default site answers instead (`000-default`), either give yours a unique `ServerName` and request it specifically, or disable the default: `sudo a2dissite 000-default && sudo systemctl reload apache2`.
-
-Note: this panel VirtualHost is **not** managed by GoApache Manager (it has no ownership marker) and is therefore never listed as editable/deletable in the UI — that is intentional.
-
-### Step 8 — Enable HTTPS (required)
+### Step 5 — Enable HTTPS (required)
 
 Browsers reject the panel's `Secure` session cookie over plain HTTP, so a certificate is effectively mandatory for any non-localhost access. With a domain and DNS in place:
 
@@ -246,7 +225,7 @@ Certbot installs the certificate, rewrites the VirtualHost to listen on 443, and
 https://panel.example.com
 ```
 
-and log in with the credentials from Step 6.
+and log in with the administrator account created in Step 4.
 
 #### Access without a domain (SSH tunnel)
 
@@ -257,10 +236,10 @@ ssh -L 8080:127.0.0.1:80 user@your-server
 # then open http://localhost:8080 in your local browser
 ```
 
-### Step 9 — First login
+### Step 6 — First login
 
 1. Open `https://panel.example.com` (or `http://localhost:8080` via tunnel).
-2. Log in with the admin account from Step 6.
+2. Log in with the administrator account created during Step 4.
 3. Sessions last 1 hour; you will be asked to log in again afterwards.
 
 ## Using the Panel
@@ -330,17 +309,11 @@ go build -o goapache-helper ./cmd/helper
 # Rebuild frontend
 cd frontend && npm ci && npm run build && cd ..
 
-# Reinstall
-sudo install -o root -g root -m 0755 goapache /opt/goapache/goapache
-sudo install -o root -g root -m 0755 goapache-helper /opt/goapache/goapache-helper
-sudo rm -rf /var/www/goapache && sudo mkdir -p /var/www/goapache
-sudo cp -r frontend/dist/. /var/www/goapache/
-
-# Restart
-sudo systemctl restart goapache goapache-helper
+# Reinstall binaries + frontend, restart services (config & vhost preserved)
+sudo PANEL_DOMAIN=skip SKIP_ADMIN=1 bash scripts/install.sh
 ```
 
-Existing configuration, database and backups in `/var/lib/goapache` are preserved.
+Existing configuration, database and backups in `/var/lib/goapache` are preserved. The installer does not overwrite an existing `/etc/goapache/config.yaml`, and `PANEL_DOMAIN=skip` leaves the panel vhost untouched.
 
 ## Uninstalling
 
@@ -365,7 +338,7 @@ VirtualHosts previously created by GoApache Manager are left in place; remove th
 | Symptom | Likely cause / fix |
 |---|---|
 | `502 Bad Gateway` on `/api/*` | Backend down — `systemctl status goapache`, `journalctl -u goapache -n 50` |
-| Health check OK but login fails with 401 | Admin was never created (Step 6), or wrong credentials |
+| Health check OK but login fails with 401 | Admin was never created (Step 4), or wrong credentials |
 | Login "succeeds" but you are bounced back / every API call returns 401 | You are on plain HTTP — cookies are `Secure`. Use HTTPS or the SSH tunnel |
 | 403 "CSRF validation failed" | Stale/missing CSRF cookie — hard-refresh and log in again |
 | Apache actions fail with helper connection refused / socket missing | Helper not running — `systemctl status goapache-helper`, `journalctl -u goapache-helper` (first start creates `/run/goapache/helper.sock`) |
@@ -381,7 +354,7 @@ VirtualHosts previously created by GoApache Manager are left in place; remove th
 Not yet. Vhost operations require the Debian/Ubuntu Apache layout (`/etc/apache2` with `sites-available`/`sites-enabled`). The helper checks the layout at runtime and refuses otherwise.
 
 **Can I change the panel port from 9090?**
-Not in the current release. It binds to loopback; reach it through your Apache VirtualHost (Step 7) and don't publish 9090.
+Not in the current release. It binds to loopback; reach it through your Apache VirtualHost (Step 4) and don't publish 9090.
 
 **Can I manage existing, hand-written vhosts?**
 No. GoApache only modifies files carrying its ownership marker. Existing sites are listed for visibility but marked external and are never changed.
@@ -390,7 +363,7 @@ No. GoApache only modifies files carrying its ownership marker. Existing sites a
 Next to the live config: `/etc/apache2/sites-available/<domain>.conf.bak-<timestamp>` (edits), `.restore-<timestamp>` (pre-restore safety copies), `.deleted-<timestamp>` (from deletions). The empty `/var/lib/goapache/backups` directory created by the installer is reserved for future use.
 
 **Who can log in / are there roles?**
-Only the admin created in Step 6. The database schema has `admin`/`operator`/`viewer` roles, but the current API does not enforce per-role permissions yet — treat every authenticated user as an admin.
+Only the admin created in Step 4. The database schema has `admin`/`operator`/`viewer` roles, but the current API does not enforce per-role permissions yet — treat every authenticated user as an admin.
 
 **Does it create SSL vhosts (Let's Encrypt) for managed sites?**
 Not yet; managed vhosts are port 80 only. Use certbot on the created site afterwards, or extend the config manually.
@@ -422,7 +395,7 @@ goapache-manager/
 │   └── helper/          # socket client + protocol types
 ├── frontend/            # React + TypeScript + Vite SPA
 ├── packaging/systemd/    # goapache.service, goapache-helper.service
-├── scripts/install.sh   # backend installer (creates user/dirs/service)
+├── scripts/install.sh   # full installer (user, dirs, binaries, systemd, frontend, panel vhost, admin)
 ├── configs/             # example config (not read at runtime yet)
 ├── screenshot.png       # UI screenshot used in this README
 └── README.md
@@ -430,7 +403,7 @@ goapache-manager/
 
 ## Roadmap
 
-- [ ] Installer covers helper, admin creation and frontend publishing end-to-end
+- [x] Installer covers helper, admin creation and frontend publishing end-to-end
 - [ ] Configurable listen address/port and config file loading
 - [ ] HTTPS (443) managed vhosts via certbot integration
 - [ ] Role-based permissions enforced in the API + user management UI
