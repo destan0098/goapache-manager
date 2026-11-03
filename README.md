@@ -72,7 +72,7 @@ Other Linux distributions may require configuration changes.
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/goapache-manager.git
+git clone https://github.com/destan0098/goapache-manager.git
 cd goapache-manager
 ```
 
