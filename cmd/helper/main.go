@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -721,6 +722,304 @@ func deleteVHost(
 	), nil
 }
 
+type VHostBackup struct {
+	ID       string    `json:"id"`
+	Type     string    `json:"type"`
+	Size     int64     `json:"size"`
+	Modified time.Time `json:"modified"`
+}
+
+// backupFilePath validates the backup ID and returns a safe backup path.
+func backupFilePath(domain, backupID string) (string, string, error) {
+	if runtime.GOOS != "linux" {
+		return "", "", errors.New("only Linux is supported")
+	}
+
+	if !domainPattern.MatchString(domain) {
+		return "", "", errors.New("invalid domain")
+	}
+
+	if backupID == "" ||
+		strings.ContainsAny(backupID, `/\`) ||
+		strings.Contains(backupID, "..") {
+		return "", "", errors.New("invalid backup ID")
+	}
+
+	base := "/etc/apache2/sites-available"
+	info, err := os.Lstat(base)
+	if err != nil {
+		return "", "", err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", "", errors.New("invalid sites-available directory")
+	}
+
+	prefix := domain + ".conf."
+	if !strings.HasPrefix(backupID, prefix) {
+		return "", "", errors.New("backup does not belong to this domain")
+	}
+
+	suffix := strings.TrimPrefix(backupID, prefix)
+	if !(suffix == "bak" ||
+		strings.HasPrefix(suffix, "bak-") ||
+		strings.HasPrefix(suffix, "deleted-") ||
+		strings.HasPrefix(suffix, "restore-")) {
+		return "", "", errors.New("unsupported backup type")
+	}
+
+	path := filepath.Join(base, backupID)
+
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return "", "", err
+	}
+	if !fi.Mode().IsRegular() || fi.Mode()&os.ModeSymlink != 0 {
+		return "", "", errors.New("backup must be a regular file")
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", err
+	}
+
+	marker := "# Managed by GoApache Manager: " + domain
+	if !strings.Contains(string(data), marker) {
+		return "", "", errors.New("backup ownership marker mismatch")
+	}
+
+	return base, path, nil
+}
+
+func listVHostBackups(ctx context.Context, domain string) (string, error) {
+	if !domainPattern.MatchString(domain) {
+		return "", errors.New("invalid domain")
+	}
+
+	base := "/etc/apache2/sites-available"
+	info, err := os.Lstat(base)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("invalid sites-available directory")
+	}
+
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return "", err
+	}
+
+	prefix := domain + ".conf."
+	backups := make([]VHostBackup, 0)
+
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+
+		name := entry.Name()
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+
+		suffix := strings.TrimPrefix(name, prefix)
+		backupType := ""
+
+		switch {
+		case suffix == "bak":
+			backupType = "initial"
+		case strings.HasPrefix(suffix, "bak-"):
+			backupType = "edit"
+		case strings.HasPrefix(suffix, "deleted-"):
+			backupType = "deleted"
+		case strings.HasPrefix(suffix, "restore-"):
+			backupType = "restore"
+		default:
+			continue
+		}
+
+		path := filepath.Join(base, name)
+		fi, err := os.Lstat(path)
+		if err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+
+		marker := "# Managed by GoApache Manager: " + domain
+		if !strings.Contains(string(data), marker) {
+			continue
+		}
+
+		backups = append(backups, VHostBackup{
+			ID:       name,
+			Type:     backupType,
+			Size:     fi.Size(),
+			Modified: fi.ModTime(),
+		})
+	}
+
+	sort.Slice(backups, func(i, j int) bool {
+		return backups[i].Modified.After(backups[j].Modified)
+	})
+
+	result, err := json.Marshal(backups)
+	if err != nil {
+		return "", err
+	}
+
+	return string(result), nil
+}
+
+func restoreVHostBackup(ctx context.Context, domain, backupID string) (string, error) {
+	base, backupPath, err := backupFilePath(domain, backupID)
+	if err != nil {
+		return "", err
+	}
+
+	configPath := filepath.Join(base, domain+".conf")
+
+	// Preserve the current enabled/disabled state.
+	enabledPath := filepath.Join("/etc/apache2/sites-enabled", domain+".conf")
+	enabled := false
+
+	_, err = os.Lstat(enabledPath)
+	if err == nil {
+		expectedTarget := filepath.Join(base, domain+".conf")
+		target, readErr := os.Readlink(enabledPath)
+		if readErr != nil || target != expectedTarget {
+			return "", errors.New("unexpected enabled symlink")
+		}
+		enabled = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+
+	// Validate the current config before backing it up.
+	currentInfo, err := os.Lstat(configPath)
+	if err == nil {
+		if !currentInfo.Mode().IsRegular() || currentInfo.Mode()&os.ModeSymlink != 0 {
+			return "", errors.New("current config is not a regular file")
+		}
+
+		currentData, readErr := os.ReadFile(configPath)
+		if readErr != nil {
+			return "", readErr
+		}
+
+		marker := "# Managed by GoApache Manager: " + domain
+		if !strings.Contains(string(currentData), marker) {
+			return "", errors.New("current config is not managed by GoApache Manager")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	backupData, err := os.ReadFile(backupPath)
+	if err != nil {
+		return "", err
+	}
+
+	// Create a backup of the current config before restoring.
+	var currentBackupPath string
+	if currentInfo != nil {
+		currentBackupPath = configPath + ".restore-" +
+			time.Now().UTC().Format("20060102T150405.000000000")
+
+		currentData, err := os.ReadFile(configPath)
+		if err != nil {
+			return "", err
+		}
+
+		if err := os.WriteFile(currentBackupPath, currentData, 0600); err != nil {
+			return "", err
+		}
+	}
+
+	tempFile, err := os.CreateTemp(base, "."+domain+".restore-*")
+	if err != nil {
+		return "", err
+	}
+
+	tempPath := tempFile.Name()
+	defer os.Remove(tempPath)
+
+	if err := tempFile.Chmod(0644); err != nil {
+		tempFile.Close()
+		return "", err
+	}
+	if _, err := tempFile.Write(backupData); err != nil {
+		tempFile.Close()
+		return "", err
+	}
+	if err := tempFile.Sync(); err != nil {
+		tempFile.Close()
+		return "", err
+	}
+	if err := tempFile.Close(); err != nil {
+		return "", err
+	}
+
+	if err := os.Rename(tempPath, configPath); err != nil {
+		return "", err
+	}
+
+	rollback := func() {
+		if currentBackupPath != "" {
+			_ = os.Rename(currentBackupPath, configPath)
+		} else {
+			_ = os.Remove(configPath)
+		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		rollback()
+		return "", err
+	}
+
+	if output, err := runApacheCommand(ctx, "apache2ctl", "-t"); err != nil {
+		rollback()
+		return "", fmt.Errorf("restore config test failed: %s: %w", output, err)
+	}
+
+	if enabled {
+		if output, err := runApacheCommand(ctx, "systemctl", "reload", "apache2"); err != nil {
+			rollback()
+			_, _ = runApacheCommand(context.Background(), "apache2ctl", "-t")
+			return "", fmt.Errorf("apache reload failed: %s: %w", output, err)
+		}
+	}
+
+	return fmt.Sprintf(
+		"Backup restored successfully\nDomain: %s\nBackup: %s\nEnabled: %t\nPrevious config backup: %s",
+		domain, backupID, enabled, currentBackupPath,
+	), nil
+}
+
+func deleteVHostBackup(ctx context.Context, domain, backupID string) (string, error) {
+	_, backupPath, err := backupFilePath(domain, backupID)
+	if err != nil {
+		return "", err
+	}
+
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	if err := os.Remove(backupPath); err != nil {
+		return "", err
+	}
+
+	return "Backup deleted successfully: " + backupID, nil
+}
+
 func runApacheCommand(
 	ctx context.Context,
 	args ...string,
@@ -944,6 +1243,14 @@ func executeRequest(
 		)
 	case "apache.vhost.delete":
 		return deleteVHost(ctx, req.Domain)
+	case "apache.vhost.backups.list":
+		return listVHostBackups(ctx, req.Domain)
+
+	case "apache.vhost.backup.restore":
+		return restoreVHostBackup(ctx, req.Domain, req.BackupID)
+
+	case "apache.vhost.backup.delete":
+		return deleteVHostBackup(ctx, req.Domain, req.BackupID)
 	default:
 		return execute(ctx, req.Action)
 	}

@@ -97,22 +97,59 @@ func (c *Client) DeleteVHost(
 	})
 }
 
+func (c *Client) ListVHostBackups(
+	ctx context.Context,
+	domain string,
+) (*Response, error) {
+	return c.executeRequest(ctx, Request{
+		Action: "apache.vhost.backups.list",
+		Domain: domain,
+	})
+}
+
+func (c *Client) RestoreVHostBackup(
+	ctx context.Context,
+	domain string,
+	backupID string,
+) (*Response, error) {
+	return c.executeRequest(ctx, Request{
+		Action:   "apache.vhost.backup.restore",
+		Domain:   domain,
+		BackupID: backupID,
+	})
+}
+
+func (c *Client) DeleteVHostBackup(
+	ctx context.Context,
+	domain string,
+	backupID string,
+) (*Response, error) {
+	return c.executeRequest(ctx, Request{
+		Action:   "apache.vhost.backup.delete",
+		Domain:   domain,
+		BackupID: backupID,
+	})
+}
+
 func (c *Client) executeRequest(
 	ctx context.Context,
 	request Request,
 ) (*Response, error) {
 
 	allowed := map[string]bool{
-		"apache.status":        true,
-		"apache.configtest":    true,
-		"apache.reload":        true,
-		"apache.restart":       true,
-		"apache.vhosts.list":   true,
-		"apache.vhost.create":  true,
-		"apache.vhost.enable":  true,
-		"apache.vhost.disable": true,
-		"apache.vhost.edit":    true,
-		"apache.vhost.delete":  true,
+		"apache.status":               true,
+		"apache.configtest":           true,
+		"apache.reload":               true,
+		"apache.restart":              true,
+		"apache.vhosts.list":          true,
+		"apache.vhost.create":         true,
+		"apache.vhost.enable":         true,
+		"apache.vhost.disable":        true,
+		"apache.vhost.edit":           true,
+		"apache.vhost.delete":         true,
+		"apache.vhost.backups.list":   true,
+		"apache.vhost.backup.restore": true,
+		"apache.vhost.backup.delete":  true,
 	}
 
 	if !allowed[request.Action] {

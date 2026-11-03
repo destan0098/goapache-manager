@@ -5,6 +5,7 @@ type Request struct {
 	Domain        string   `json:"domain,omitempty"`
 	DocumentRoot  string   `json:"document_root,omitempty"`
 	ServerAliases []string `json:"server_aliases,omitempty"`
+	BackupID      string   `json:"backup_id,omitempty"`
 }
 
 type Response struct {
