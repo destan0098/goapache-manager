@@ -2,6 +2,7 @@ package helper
 
 type Request struct {
 	Action string `json:"action"`
+	Domain string `json:"domain,omitempty"`
 }
 
 type Response struct {

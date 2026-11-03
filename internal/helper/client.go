@@ -35,28 +35,44 @@ func NewClient(socketPath string) *Client {
 		},
 	}
 }
-
 func (c *Client) Execute(
 	ctx context.Context,
 	action string,
 ) (*Response, error) {
+	return c.executeRequest(ctx, Request{
+		Action: action,
+	})
+}
+
+func (c *Client) CreateVHost(
+	ctx context.Context,
+	domain string,
+) (*Response, error) {
+	return c.executeRequest(ctx, Request{
+		Action: "apache.vhost.create",
+		Domain: domain,
+	})
+}
+
+func (c *Client) executeRequest(
+	ctx context.Context,
+	request Request,
+) (*Response, error) {
 
 	allowed := map[string]bool{
-		"apache.status":      true,
-		"apache.configtest":  true,
-		"apache.reload":      true,
-		"apache.restart":     true,
-		"apache.vhosts.list": true,
+		"apache.status":       true,
+		"apache.configtest":   true,
+		"apache.reload":       true,
+		"apache.restart":      true,
+		"apache.vhosts.list":  true,
+		"apache.vhost.create": true,
 	}
 
-	if !allowed[action] {
+	if !allowed[request.Action] {
 		return nil, fmt.Errorf("operation not allowed")
 	}
 
-	payload, err := json.Marshal(Request{
-		Action: action,
-	})
-
+	payload, err := json.Marshal(request)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +83,6 @@ func (c *Client) Execute(
 		"http://localhost/v1/execute",
 		bytes.NewReader(payload),
 	)
-
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +106,10 @@ func (c *Client) Execute(
 	}
 
 	if resp.StatusCode != http.StatusOK || !result.Success {
-		return &result, fmt.Errorf("helper operation failed: %s", result.Error)
+		return &result, fmt.Errorf(
+			"helper operation failed: %s",
+			result.Error,
+		)
 	}
 
 	return &result, nil

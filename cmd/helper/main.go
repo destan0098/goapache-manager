@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"goapache-manager/internal/helper"
 	"log"
 	"net"
 	"net/http"
@@ -12,13 +13,12 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
-
-	"goapache-manager/internal/helper"
 )
 
 const socketPath = "/run/goapache/helper.sock"
@@ -28,6 +28,213 @@ type safeListener struct {
 	expectedUID uint32
 }
 
+var domainPattern = regexp.MustCompile(
+	`^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$`,
+)
+
+func createVHost(
+	ctx context.Context,
+	rawDomain string,
+) (string, error) {
+	// First implementation: Debian/Ubuntu only.
+	if _, err := os.Stat("/etc/apache2"); err != nil {
+		return "", fmt.Errorf("this operation currently supports Debian/Ubuntu Apache only")
+	}
+
+	domain := strings.ToLower(strings.TrimSpace(rawDomain))
+
+	if len(domain) == 0 || len(domain) > 253 ||
+		!domainPattern.MatchString(domain) {
+		return "", fmt.Errorf("invalid domain name")
+	}
+
+	if domain == "localhost" {
+		return "", fmt.Errorf("localhost cannot be used as a managed virtual host")
+	}
+
+	sitesAvailable := "/etc/apache2/sites-available"
+	sitesEnabled := "/etc/apache2/sites-enabled"
+	webRoot := "/var/www"
+
+	// Verify expected directories and reject symlinks.
+	for _, dir := range []string{
+		sitesAvailable,
+		sitesEnabled,
+		webRoot,
+	} {
+		info, err := os.Lstat(dir)
+		if err != nil {
+			return "", fmt.Errorf("required directory %s: %w", dir, err)
+		}
+
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("unsafe directory: %s", dir)
+		}
+	}
+
+	filename := domain + ".conf"
+	configPath := filepath.Join(sitesAvailable, filename)
+	enabledPath := filepath.Join(sitesEnabled, filename)
+	documentRoot := filepath.Join(webRoot, domain)
+
+	// Never overwrite an existing configuration or symlink.
+	if _, err := os.Lstat(configPath); err == nil {
+		return "", fmt.Errorf("virtual host configuration already exists")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+
+	if _, err := os.Lstat(enabledPath); err == nil {
+		return "", fmt.Errorf("virtual host is already enabled")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+
+	documentCreated := false
+
+	if info, err := os.Lstat(documentRoot); err == nil {
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("document root exists but is not a safe directory")
+		}
+	} else if errors.Is(err, os.ErrNotExist) {
+		if err := os.Mkdir(documentRoot, 0755); err != nil {
+			return "", fmt.Errorf("create document root: %w", err)
+		}
+		documentCreated = true
+	} else {
+		return "", err
+	}
+
+	configCreated := false
+	linkCreated := false
+
+	cleanup := func() {
+		if linkCreated {
+			_ = os.Remove(enabledPath)
+		}
+
+		if configCreated {
+			_ = os.Remove(configPath)
+		}
+
+		if documentCreated {
+			_ = os.Remove(documentRoot)
+		}
+	}
+
+	config := fmt.Sprintf(`<VirtualHost *:80>
+    ServerName %s
+
+    DocumentRoot %s
+
+    <Directory %s>
+        Options FollowSymLinks
+        AllowOverride None
+        Require all granted
+    </Directory>
+
+    ErrorLog ${APACHE_LOG_DIR}/%s-error.log
+    CustomLog ${APACHE_LOG_DIR}/%s-access.log combined
+</VirtualHost>
+`, domain, documentRoot, documentRoot, domain, domain)
+
+	file, err := os.OpenFile(
+		configPath,
+		os.O_WRONLY|os.O_CREATE|os.O_EXCL,
+		0644,
+	)
+	if err != nil {
+		if documentCreated {
+			_ = os.Remove(documentRoot)
+		}
+
+		return "", fmt.Errorf("create config: %w", err)
+	}
+
+	configCreated = true
+
+	_, writeErr := file.WriteString(config)
+	syncErr := file.Sync()
+	closeErr := file.Close()
+
+	if writeErr != nil || syncErr != nil || closeErr != nil {
+		cleanup()
+
+		return "", fmt.Errorf(
+			"write apache configuration: %w",
+			errors.Join(writeErr, syncErr, closeErr),
+		)
+	}
+
+	// Enable using a fixed relative symlink.
+	if err := os.Symlink(
+		"../sites-available/"+domain+".conf",
+		enabledPath,
+	); err != nil {
+		cleanup()
+		return "", fmt.Errorf("enable vhost: %w", err)
+	}
+
+	linkCreated = true
+
+	// Validate before reloading Apache.
+	testOutput, err := runApacheCommand(ctx, "-t")
+	if err != nil {
+		cleanup()
+		return testOutput, fmt.Errorf("apache configtest failed: %w", err)
+	}
+
+	reloadOutput, err := runSystemctl(ctx, "reload", "apache2")
+	if err != nil {
+		cleanup()
+
+		// Best-effort validation and reload of the previous configuration.
+		rollbackCtx, cancel := context.WithTimeout(
+			context.Background(),
+			20*time.Second,
+		)
+		defer cancel()
+
+		if _, rollbackErr := runApacheCommand(rollbackCtx, "-t"); rollbackErr == nil {
+			_, _ = runSystemctl(rollbackCtx, "reload", "apache2")
+		}
+
+		return reloadOutput, fmt.Errorf("apache reload failed: %w", err)
+	}
+
+	return fmt.Sprintf(
+		"VirtualHost created successfully\nDomain: %s\nDocumentRoot: %s\nConfig: %s\n%s",
+		domain,
+		documentRoot,
+		configPath,
+		testOutput,
+	), nil
+}
+
+func runApacheCommand(
+	ctx context.Context,
+	args ...string,
+) (string, error) {
+	cmd := exec.CommandContext(ctx, apacheControl(), args...)
+	output, err := cmd.CombinedOutput()
+
+	return strings.TrimSpace(string(output)), err
+}
+
+func runSystemctl(
+	ctx context.Context,
+	args ...string,
+) (string, error) {
+	cmd := exec.CommandContext(
+		ctx,
+		"/usr/bin/systemctl",
+		append([]string{"--no-ask-password"}, args...)...,
+	)
+
+	output, err := cmd.CombinedOutput()
+
+	return strings.TrimSpace(string(output)), err
+}
 func (l *safeListener) Accept() (net.Conn, error) {
 	for {
 		conn, err := l.Listener.Accept()
@@ -186,7 +393,7 @@ func executeHandler(
 	)
 	defer cancel()
 
-	output, err := execute(ctx, req.Action)
+	output, err := executeRequest(ctx, req)
 
 	result := helper.Response{
 		Success: err == nil,
@@ -205,7 +412,17 @@ func executeHandler(
 
 	_ = json.NewEncoder(w).Encode(result)
 }
-
+func executeRequest(
+	ctx context.Context,
+	req helper.Request,
+) (string, error) {
+	switch req.Action {
+	case "apache.vhost.create":
+		return createVHost(ctx, req.Domain)
+	default:
+		return execute(ctx, req.Action)
+	}
+}
 func execute(
 	ctx context.Context,
 	action string,
