@@ -389,3 +389,141 @@ func (a *ApacheAPI) DeleteVHost(w http.ResponseWriter, r *http.Request) {
 		"output":  resultOutput(result),
 	})
 }
+
+type vhostBackupResponse struct {
+	ID       string    `json:"id"`
+	Type     string    `json:"type"`
+	Size     int64     `json:"size"`
+	Modified time.Time `json:"modified"`
+}
+
+func (a *ApacheAPI) ListVHostBackups(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	user, ok := auth.CurrentUser(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if user.Role != "admin" && user.Role != "operator" {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	domain := chi.URLParam(r, "domain")
+	if strings.TrimSpace(domain) == "" {
+		http.Error(w, "Invalid domain", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	result, err := a.Helper.ListVHostBackups(ctx, domain)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if result == nil {
+		http.Error(w, "Empty helper response", http.StatusInternalServerError)
+		return
+	}
+
+	var backups []vhostBackupResponse
+	if err := json.Unmarshal([]byte(result.Output), &backups); err != nil {
+		http.Error(w, "Invalid backup list response", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"domain":  domain,
+		"backups": backups,
+		"count":   len(backups),
+	})
+}
+
+func (a *ApacheAPI) RestoreVHostBackup(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	user, ok := auth.CurrentUser(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if user.Role != "admin" && user.Role != "operator" {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	domain := chi.URLParam(r, "domain")
+	backupID := chi.URLParam(r, "id")
+
+	if strings.TrimSpace(domain) == "" || strings.TrimSpace(backupID) == "" {
+		http.Error(w, "Invalid domain or backup ID", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
+	defer cancel()
+
+	result, err := a.Helper.RestoreVHostBackup(ctx, domain, backupID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":   true,
+		"domain":    domain,
+		"backup_id": backupID,
+		"message":   "Backup restored successfully",
+		"output":    resultOutput(result),
+	})
+}
+
+func (a *ApacheAPI) DeleteVHostBackup(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	user, ok := auth.CurrentUser(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if user.Role != "admin" && user.Role != "operator" {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	domain := chi.URLParam(r, "domain")
+	backupID := chi.URLParam(r, "id")
+
+	if strings.TrimSpace(domain) == "" || strings.TrimSpace(backupID) == "" {
+		http.Error(w, "Invalid domain or backup ID", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	result, err := a.Helper.DeleteVHostBackup(ctx, domain, backupID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":   true,
+		"domain":    domain,
+		"backup_id": backupID,
+		"message":   "Backup deleted successfully",
+		"output":    resultOutput(result),
+	})
+}
