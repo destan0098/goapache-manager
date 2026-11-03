@@ -17,7 +17,7 @@ func NewRouter(db *sql.DB) http.Handler {
 
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(30 * time.Second))
+	r.Use(middleware.Timeout(45 * time.Second))
 
 	authAPI := &AuthAPI{DB: db}
 
@@ -43,6 +43,16 @@ func NewRouter(db *sql.DB) http.Handler {
 		p.Use(CSRF)
 		p.Get("/api/v1/apache/vhosts", apacheAPI.VHosts)
 		p.Post("/api/v1/apache/vhosts", apacheAPI.CreateVHost)
+		p.Post(
+			"/api/v1/apache/vhosts/{domain}/enable",
+			apacheAPI.EnableVHost,
+		)
+
+		p.Post(
+			"/api/v1/apache/vhosts/{domain}/disable",
+			apacheAPI.DisableVHost,
+		)
+		p.Put("/api/v1/apache/vhosts/{domain}", apacheAPI.EditVHost)
 		p.Post("/api/v1/auth/logout", authAPI.Logout)
 		p.Get("/api/v1/auth/me", authAPI.Me)
 

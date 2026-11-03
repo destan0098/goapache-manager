@@ -3,13 +3,15 @@ package api
 import (
 	"context"
 	"encoding/json"
+	apachemanager "goapache-manager/internal/apache"
 	"goapache-manager/internal/auth"
 	"goapache-manager/internal/helper"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
-	apachemanager "goapache-manager/internal/apache"
+	"github.com/go-chi/chi/v5"
 )
 
 type ApacheAPI struct {
@@ -200,4 +202,156 @@ func resultOutput(result *helper.Response) string {
 	}
 
 	return result.Output
+}
+func (a *ApacheAPI) EnableVHost(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	a.setVHostEnabled(w, r, true)
+}
+
+func (a *ApacheAPI) DisableVHost(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	a.setVHostEnabled(w, r, false)
+}
+
+func (a *ApacheAPI) setVHostEnabled(
+	w http.ResponseWriter,
+	r *http.Request,
+	enabled bool,
+) {
+	user, ok := auth.CurrentUser(r)
+
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{
+			"success": false,
+			"error":   "Unauthorized",
+		})
+		return
+	}
+
+	if user.Role != "admin" && user.Role != "operator" {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"success": false,
+			"error":   "Permission denied",
+		})
+		return
+	}
+
+	domain := chi.URLParam(r, "domain")
+
+	if domain == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"error":   "Domain is required",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(
+		r.Context(),
+		35*time.Second,
+	)
+	defer cancel()
+
+	var (
+		result *helper.Response
+		err    error
+		action string
+	)
+
+	if enabled {
+		action = "enabled"
+		result, err = a.Helper.EnableVHost(ctx, domain)
+	} else {
+		action = "disabled"
+		result, err = a.Helper.DisableVHost(ctx, domain)
+	}
+
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"success": false,
+			"error":   err.Error(),
+			"output":  resultOutput(result),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"domain":  domain,
+		"enabled": enabled,
+		"message": "VirtualHost " + action + " successfully",
+		"output":  resultOutput(result),
+	})
+}
+
+func (a *ApacheAPI) EditVHost(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.CurrentUser(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if user.Role != "admin" && user.Role != "operator" {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	domain := chi.URLParam(r, "domain")
+
+	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+
+	var input struct {
+		DocumentRoot  string   `json:"document_root"`
+		ServerAliases []string `json:"server_aliases"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+
+	if err := decoder.Decode(&input); err != nil {
+		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+		return
+	}
+
+	var extra interface{}
+	if err := decoder.Decode(&extra); err != io.EOF {
+		http.Error(w, "Request must contain only one JSON object", http.StatusBadRequest)
+		return
+	}
+
+	if strings.TrimSpace(input.DocumentRoot) == "" {
+		http.Error(w, "document_root is required", http.StatusBadRequest)
+		return
+	}
+
+	if len(input.ServerAliases) > 50 {
+		http.Error(w, "Too many ServerAliases", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
+	defer cancel()
+
+	result, err := a.Helper.EditVHost(
+		ctx,
+		domain,
+		input.DocumentRoot,
+		input.ServerAliases,
+	)
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"domain":  domain,
+		"message": "VirtualHost updated successfully",
+		"output":  resultOutput(result),
+	})
 }

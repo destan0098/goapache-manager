@@ -1,8 +1,10 @@
 package helper
 
 type Request struct {
-	Action string `json:"action"`
-	Domain string `json:"domain,omitempty"`
+	Action        string   `json:"action"`
+	Domain        string   `json:"domain,omitempty"`
+	DocumentRoot  string   `json:"document_root,omitempty"`
+	ServerAliases []string `json:"server_aliases,omitempty"`
 }
 
 type Response struct {

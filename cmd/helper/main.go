@@ -122,7 +122,8 @@ func createVHost(
 		}
 	}
 
-	config := fmt.Sprintf(`<VirtualHost *:80>
+	config := fmt.Sprintf(`# Managed by GoApache Manager: %s
+	<VirtualHost *:80>
     ServerName %s
 
     DocumentRoot %s
@@ -136,7 +137,7 @@ func createVHost(
     ErrorLog ${APACHE_LOG_DIR}/%s-error.log
     CustomLog ${APACHE_LOG_DIR}/%s-access.log combined
 </VirtualHost>
-`, domain, documentRoot, documentRoot, domain, domain)
+`, domain, domain, documentRoot, documentRoot, domain, domain)
 
 	file, err := os.OpenFile(
 		configPath,
@@ -207,6 +208,356 @@ func createVHost(
 		domain,
 		documentRoot,
 		configPath,
+		testOutput,
+	), nil
+}
+func setVHostEnabled(
+	ctx context.Context,
+	rawDomain string,
+	enabled bool,
+) (string, error) {
+	if _, err := os.Stat("/etc/apache2"); err != nil {
+		return "", fmt.Errorf("this operation currently supports Debian/Ubuntu only")
+	}
+
+	domain := strings.ToLower(strings.TrimSpace(rawDomain))
+
+	if len(domain) == 0 ||
+		len(domain) > 253 ||
+		!domainPattern.MatchString(domain) ||
+		domain == "localhost" {
+		return "", fmt.Errorf("invalid domain name")
+	}
+
+	sitesAvailable := "/etc/apache2/sites-available"
+	sitesEnabled := "/etc/apache2/sites-enabled"
+
+	for _, dir := range []string{sitesAvailable, sitesEnabled} {
+		info, err := os.Lstat(dir)
+		if err != nil {
+			return "", err
+		}
+
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("unsafe directory: %s", dir)
+		}
+	}
+
+	filename := domain + ".conf"
+	configPath := filepath.Join(sitesAvailable, filename)
+	enabledPath := filepath.Join(sitesEnabled, filename)
+
+	// Only modify configurations created by GoApache Manager.
+	configInfo, err := os.Lstat(configPath)
+	if err != nil {
+		return "", fmt.Errorf("configuration not found: %w", err)
+	}
+
+	if !configInfo.Mode().IsRegular() {
+		return "", fmt.Errorf("configuration is not a regular file")
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", err
+	}
+
+	marker := "# Managed by GoApache Manager: " + domain
+
+	firstLine := strings.SplitN(string(content), "\n", 2)[0]
+	if firstLine != marker {
+		return "", fmt.Errorf("configuration is not managed by GoApache Manager")
+	}
+
+	expectedTarget := "../sites-available/" + filename
+
+	// Determine the current enabled state.
+	linkTarget, linkErr := os.Readlink(enabledPath)
+	isEnabled := linkErr == nil
+
+	if linkErr != nil && !errors.Is(linkErr, os.ErrNotExist) {
+		return "", fmt.Errorf("cannot inspect enabled configuration: %w", linkErr)
+	}
+
+	if isEnabled && linkTarget != expectedTarget {
+		return "", fmt.Errorf("enabled path is not the expected GoApache symlink")
+	}
+
+	if enabled && isEnabled {
+		return "VirtualHost is already enabled", nil
+	}
+
+	if !enabled && !isEnabled {
+		return "VirtualHost is already disabled", nil
+	}
+
+	// Apply the requested change.
+	if enabled {
+		if err := os.Symlink(expectedTarget, enabledPath); err != nil {
+			return "", fmt.Errorf("enable VirtualHost: %w", err)
+		}
+	} else {
+		if err := os.Remove(enabledPath); err != nil {
+			return "", fmt.Errorf("disable VirtualHost: %w", err)
+		}
+	}
+
+	// Restore the original state if validation or reload fails.
+	rollback := func() {
+		if enabled {
+			_ = os.Remove(enabledPath)
+		} else {
+			_ = os.Symlink(expectedTarget, enabledPath)
+		}
+
+		rollbackCtx, cancel := context.WithTimeout(
+			context.Background(),
+			20*time.Second,
+		)
+		defer cancel()
+
+		if _, err := runApacheCommand(rollbackCtx, "-t"); err == nil {
+			_, _ = runSystemctl(
+				rollbackCtx,
+				"reload",
+				apacheService(),
+			)
+		}
+	}
+
+	testOutput, err := runApacheCommand(ctx, "-t")
+	if err != nil {
+		rollback()
+		return testOutput, fmt.Errorf("apache configtest failed: %w", err)
+	}
+
+	reloadOutput, err := runSystemctl(
+		ctx,
+		"reload",
+		apacheService(),
+	)
+	if err != nil {
+		rollback()
+		return reloadOutput, fmt.Errorf("apache reload failed: %w", err)
+	}
+
+	operation := "disabled"
+	if enabled {
+		operation = "enabled"
+	}
+
+	return fmt.Sprintf(
+		"VirtualHost %s successfully\nDomain: %s\n%s",
+		operation,
+		domain,
+		testOutput,
+	), nil
+}
+
+func editVHost(
+	ctx context.Context,
+	rawDomain string,
+	documentRoot string,
+	serverAliases []string,
+) (string, error) {
+	if _, err := os.Stat("/etc/apache2"); err != nil {
+		return "", fmt.Errorf("this operation currently supports Debian/Ubuntu only")
+	}
+
+	domain := strings.ToLower(strings.TrimSpace(rawDomain))
+	if len(domain) == 0 || len(domain) > 253 ||
+		!domainPattern.MatchString(domain) || domain == "localhost" {
+		return "", fmt.Errorf("invalid domain name")
+	}
+
+	documentRoot = strings.TrimSpace(documentRoot)
+	if !filepath.IsAbs(documentRoot) || filepath.Clean(documentRoot) != documentRoot {
+		return "", fmt.Errorf("document root must be an absolute clean path")
+	}
+
+	// DocumentRoot must be a real directory under /var/www.
+	const webRoot = "/var/www"
+	rel, err := filepath.Rel(webRoot, documentRoot)
+	if err != nil || rel == "." || rel == ".." ||
+		strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("document root must be inside /var/www")
+	}
+
+	for _, dir := range []string{webRoot, documentRoot} {
+		info, err := os.Lstat(dir)
+		if err != nil {
+			return "", fmt.Errorf("inspect directory %s: %w", dir, err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("unsafe directory: %s", dir)
+		}
+	}
+
+	// Reject symlinks in every intermediate DocumentRoot component.
+	current := webRoot
+	for _, part := range strings.Split(rel, string(os.PathSeparator)) {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return "", fmt.Errorf("inspect document root component: %w", err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("unsafe document root component: %s", current)
+		}
+	}
+
+	sitesAvailable := "/etc/apache2/sites-available"
+	sitesEnabled := "/etc/apache2/sites-enabled"
+
+	for _, dir := range []string{sitesAvailable, sitesEnabled} {
+		info, err := os.Lstat(dir)
+		if err != nil {
+			return "", err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("unsafe directory: %s", dir)
+		}
+	}
+
+	configPath := filepath.Join(sitesAvailable, domain+".conf")
+
+	info, err := os.Lstat(configPath)
+	if err != nil {
+		return "", fmt.Errorf("configuration not found: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("configuration is not a regular file")
+	}
+
+	oldContent, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", err
+	}
+
+	marker := "# Managed by GoApache Manager: " + domain
+	firstLine := strings.SplitN(string(oldContent), "\n", 2)[0]
+	if firstLine != marker {
+		return "", fmt.Errorf("configuration is not managed by GoApache Manager")
+	}
+
+	// Validate aliases and reject duplicates.
+	seen := map[string]bool{domain: true}
+	aliases := make([]string, 0, len(serverAliases))
+
+	for _, rawAlias := range serverAliases {
+		alias := strings.ToLower(strings.TrimSpace(rawAlias))
+		if alias == "" || len(alias) > 253 ||
+			!domainPattern.MatchString(alias) || alias == "localhost" {
+			return "", fmt.Errorf("invalid ServerAlias: %q", rawAlias)
+		}
+		if seen[alias] {
+			return "", fmt.Errorf("duplicate ServerAlias: %s", alias)
+		}
+		seen[alias] = true
+		aliases = append(aliases, alias)
+	}
+
+	aliasConfig := ""
+	if len(aliases) > 0 {
+		aliasConfig = "\tServerAlias " + strings.Join(aliases, " ") + "\n"
+	}
+
+	newConfig := fmt.Sprintf(`# Managed by GoApache Manager: %s
+<VirtualHost *:80>
+	ServerName %s
+%s
+	DocumentRoot %s
+
+	<Directory %s>
+		Options FollowSymLinks
+		AllowOverride None
+		Require all granted
+	</Directory>
+
+	ErrorLog ${APACHE_LOG_DIR}/%s-error.log
+	CustomLog ${APACHE_LOG_DIR}/%s-access.log combined
+</VirtualHost>
+`, domain, domain, aliasConfig, documentRoot, documentRoot, domain, domain)
+
+	// Create a unique backup before modifying the configuration.
+	backupPath := configPath + ".bak-" + time.Now().UTC().Format("20060102T150405.000000000")
+	backup, err := os.OpenFile(
+		backupPath,
+		os.O_WRONLY|os.O_CREATE|os.O_EXCL,
+		0600,
+	)
+	if err != nil {
+		return "", fmt.Errorf("create configuration backup: %w", err)
+	}
+
+	_, writeErr := backup.Write(oldContent)
+	syncErr := backup.Sync()
+	closeErr := backup.Close()
+	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
+		_ = os.Remove(backupPath)
+		return "", fmt.Errorf("write configuration backup: %w", err)
+	}
+
+	// Atomic replacement using a temporary file in the same directory.
+	writeAtomic := func(content []byte) error {
+		tmp, err := os.CreateTemp(sitesAvailable, ".goapache-*.tmp")
+		if err != nil {
+			return err
+		}
+
+		tmpName := tmp.Name()
+		defer os.Remove(tmpName)
+
+		if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+			_ = tmp.Close()
+			return err
+		}
+
+		_, writeErr := tmp.Write(content)
+		syncErr := tmp.Sync()
+		closeErr := tmp.Close()
+		if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
+			return err
+		}
+
+		return os.Rename(tmpName, configPath)
+	}
+
+	if err := writeAtomic([]byte(newConfig)); err != nil {
+		return "", fmt.Errorf("write new configuration: %w", err)
+	}
+
+	rollback := func() {
+		_ = writeAtomic(oldContent)
+
+		rollbackCtx, cancel := context.WithTimeout(
+			context.Background(),
+			20*time.Second,
+		)
+		defer cancel()
+
+		if _, err := runApacheCommand(rollbackCtx, "-t"); err == nil {
+			_, _ = runSystemctl(rollbackCtx, "reload", apacheService())
+		}
+	}
+
+	testOutput, err := runApacheCommand(ctx, "-t")
+	if err != nil {
+		rollback()
+		return testOutput, fmt.Errorf("apache configtest failed: %w", err)
+	}
+
+	reloadOutput, err := runSystemctl(ctx, "reload", apacheService())
+	if err != nil {
+		rollback()
+		return reloadOutput, fmt.Errorf("apache reload failed: %w", err)
+	}
+
+	return fmt.Sprintf(
+		"VirtualHost updated successfully\nDomain: %s\nDocumentRoot: %s\nBackup: %s\n%s",
+		domain,
+		documentRoot,
+		backupPath,
 		testOutput,
 	), nil
 }
@@ -419,6 +770,19 @@ func executeRequest(
 	switch req.Action {
 	case "apache.vhost.create":
 		return createVHost(ctx, req.Domain)
+
+	case "apache.vhost.enable":
+		return setVHostEnabled(ctx, req.Domain, true)
+
+	case "apache.vhost.disable":
+		return setVHostEnabled(ctx, req.Domain, false)
+	case "apache.vhost.edit":
+		return editVHost(
+			ctx,
+			req.Domain,
+			req.DocumentRoot,
+			req.ServerAliases,
+		)
 	default:
 		return execute(ctx, req.Action)
 	}

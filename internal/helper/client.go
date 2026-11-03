@@ -53,6 +53,39 @@ func (c *Client) CreateVHost(
 		Domain: domain,
 	})
 }
+func (c *Client) EnableVHost(
+	ctx context.Context,
+	domain string,
+) (*Response, error) {
+	return c.executeRequest(ctx, Request{
+		Action: "apache.vhost.enable",
+		Domain: domain,
+	})
+}
+
+func (c *Client) DisableVHost(
+	ctx context.Context,
+	domain string,
+) (*Response, error) {
+	return c.executeRequest(ctx, Request{
+		Action: "apache.vhost.disable",
+		Domain: domain,
+	})
+}
+
+func (c *Client) EditVHost(
+	ctx context.Context,
+	domain string,
+	documentRoot string,
+	serverAliases []string,
+) (*Response, error) {
+	return c.executeRequest(ctx, Request{
+		Action:        "apache.vhost.edit",
+		Domain:        domain,
+		DocumentRoot:  documentRoot,
+		ServerAliases: serverAliases,
+	})
+}
 
 func (c *Client) executeRequest(
 	ctx context.Context,
@@ -60,12 +93,15 @@ func (c *Client) executeRequest(
 ) (*Response, error) {
 
 	allowed := map[string]bool{
-		"apache.status":       true,
-		"apache.configtest":   true,
-		"apache.reload":       true,
-		"apache.restart":      true,
-		"apache.vhosts.list":  true,
-		"apache.vhost.create": true,
+		"apache.status":        true,
+		"apache.configtest":    true,
+		"apache.reload":        true,
+		"apache.restart":       true,
+		"apache.vhosts.list":   true,
+		"apache.vhost.create":  true,
+		"apache.vhost.enable":  true,
+		"apache.vhost.disable": true,
+		"apache.vhost.edit":    true,
 	}
 
 	if !allowed[request.Action] {
