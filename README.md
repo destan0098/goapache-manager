@@ -4,6 +4,11 @@
 
 GoApache Manager provides a web interface for managing Apache VirtualHosts on Linux systems. It is designed to simplify common Apache administration tasks while keeping privileged operations isolated in a dedicated helper process.
 
+## ScreenShot
+
+![GoApache Manager](/screenshot.png?raw=true "GoApache Manager")
+
+
 ## Features
 
 - **VirtualHost Management**
@@ -150,9 +155,6 @@ goapache-manager/
 └── frontend/
     └── src/
 ```
-## ScreenShot
-
-![GoApache Manager](/screenshot.png?raw=true "GoApache Manager")
 
 ## Roadmap
 
