@@ -354,7 +354,87 @@ func setVHostEnabled(
 		testOutput,
 	), nil
 }
+func getVHost(domain string) (string, error) {
+	domain = strings.ToLower(strings.TrimSpace(domain))
 
+	if domain == "" || len(domain) > 253 ||
+		!domainPattern.MatchString(domain) {
+		return "", fmt.Errorf("invalid domain")
+	}
+
+	sitesAvailable := "/etc/apache2/sites-available"
+
+	dirInfo, err := os.Lstat(sitesAvailable)
+	if err != nil {
+		return "", err
+	}
+
+	if !dirInfo.IsDir() || dirInfo.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("unsafe Apache configuration directory")
+	}
+
+	configPath := filepath.Join(sitesAvailable, domain+".conf")
+
+	info, err := os.Lstat(configPath)
+	if err != nil {
+		return "", fmt.Errorf("configuration not found")
+	}
+
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("configuration is not a regular file")
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", err
+	}
+
+	marker := "# Managed by GoApache Manager: " + domain
+	lines := strings.Split(string(content), "\n")
+
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != marker {
+		return "", fmt.Errorf("configuration is not managed by GoApache Manager")
+	}
+
+	documentRoot := ""
+	aliases := []string{}
+
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		switch strings.ToLower(fields[0]) {
+		case "documentroot":
+			if documentRoot != "" {
+				return "", fmt.Errorf("multiple DocumentRoot directives found")
+			}
+			documentRoot = strings.Trim(fields[1], `"'`)
+
+		case "serveralias":
+			for _, alias := range fields[1:] {
+				aliases = append(aliases, strings.Trim(alias, `"'`))
+			}
+		}
+	}
+
+	if documentRoot == "" {
+		return "", fmt.Errorf("DocumentRoot not found")
+	}
+
+	result, err := json.Marshal(map[string]interface{}{
+		"domain":         domain,
+		"document_root":  documentRoot,
+		"server_aliases": aliases,
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	return string(result), nil
+}
 func editVHost(
 	ctx context.Context,
 	rawDomain string,
@@ -1251,6 +1331,8 @@ func executeRequest(
 
 	case "apache.vhost.backup.delete":
 		return deleteVHostBackup(ctx, req.Domain, req.BackupID)
+	case "apache.vhost.get":
+		return getVHost(req.Domain)
 	default:
 		return execute(ctx, req.Action)
 	}

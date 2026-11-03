@@ -17,9 +17,11 @@ import {
   Trash2,
   Power,
   PowerOff,
+  Pencil,
 } from 'lucide-react'
+import type { Backup, User, VHost, VHostDetails } from './api/client'
 import { api } from './api/client'
-import type { Backup, User, VHost } from './api/client'
+
 
 type Page = 'dashboard' | 'vhosts' | 'backups'
 
@@ -45,6 +47,12 @@ function App() {
   const [selectedDomain, setSelectedDomain] = useState('')
   const [backups, setBackups] = useState<Backup[]>([])
   const [backupsLoading, setBackupsLoading] = useState(false)
+
+  const [editingVHost, setEditingVHost] = useState<VHostDetails | null>(null)
+  const [editDocumentRoot, setEditDocumentRoot] = useState('')
+  const [editServerAliases, setEditServerAliases] = useState('')
+  const [editLoading, setEditLoading] = useState(false)
+  const [editSaving, setEditSaving] = useState(false)
 
   const loadStatus = useCallback(async () => {
     setStatusLoading(true)
@@ -131,7 +139,53 @@ function App() {
       setLoginLoading(false)
     }
   }
+  async function handleOpenEditVHost(domain: string) {
+    setError('')
+    setEditLoading(true)
 
+    try {
+      const response = await api.getVHost(domain)
+
+      setEditingVHost(response.vhost)
+      setEditDocumentRoot(response.vhost.document_root)
+      setEditServerAliases(response.vhost.server_aliases.join('\n'))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load VirtualHost')
+    } finally {
+      setEditLoading(false)
+    }
+  }
+
+  async function handleSaveEditVHost(event: FormEvent) {
+    event.preventDefault()
+
+    if (!editingVHost) return
+
+    setError('')
+    setEditSaving(true)
+
+    try {
+      const aliases = editServerAliases
+          .split(/[\s,]+/)
+          .map(alias => alias.trim())
+          .filter(Boolean)
+
+      await api.editVHost(
+          editingVHost.domain,
+          editDocumentRoot.trim(),
+          aliases
+      )
+
+      showNotice(`VirtualHost ${editingVHost.domain} updated successfully`)
+      setEditingVHost(null)
+
+      await loadVHosts()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not update VirtualHost')
+    } finally {
+      setEditSaving(false)
+    }
+  }
   async function handleLogout() {
     try {
       await api.logout()
@@ -404,22 +458,87 @@ function App() {
                   <table>
                     <thead><tr><th>Domain</th><th>Port</th><th>Config file</th><th>Default</th><th>Actions</th></tr></thead>
                     <tbody>
-                      {vhosts.map((host) => (
-                        <tr key={`${host.domain}-${host.port}-${host.file}`}>
-                          <td><strong>{host.domain}</strong></td>
-                          <td>{host.port}</td>
-                          <td className="file-cell">{host.file}:{host.line}</td>
-                          <td>{host.default ? <span className="pill green">Default</span> : <span className="pill">Standard</span>}</td>
-                          <td>
-                            <div className="row-actions">
-                              <button title="Enable" className="icon-button green-icon" onClick={() => void handleVHostAction(host.domain, 'enable')}><Power size={16} /></button>
-                              <button title="Disable" className="icon-button" onClick={() => void handleVHostAction(host.domain, 'disable')}><PowerOff size={16} /></button>
-                              <button title="Delete" className="icon-button red-icon" onClick={() => void handleVHostAction(host.domain, 'delete')}><Trash2 size={16} /></button>
-                              <button title="View backups" className="icon-button" onClick={() => { setSelectedDomain(host.domain); setPage('backups') }}><Archive size={16} /></button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                    {vhosts.map((host) => {
+                      const managed =
+                          host.file.endsWith(`/sites-enabled/${host.domain}.conf`)
+
+                      return (
+                          <tr key={`${host.domain}-${host.port}-${host.file}`}>
+                            <td>
+                              <strong>{host.domain}</strong>
+                              {!managed && (
+                                  <div>
+                                    <span className="pill">External</span>
+                                  </div>
+                              )}
+                            </td>
+
+                            <td>{host.port}</td>
+
+                            <td className="file-cell">
+                              {host.file}:{host.line}
+                            </td>
+
+                            <td>
+                              {host.default
+                                  ? <span className="pill green">Default</span>
+                                  : <span className="pill">Standard</span>}
+                            </td>
+
+                            <td>
+                              <div className="row-actions">
+                                {managed ? (
+                                    <>
+                                      <button
+                                          className="icon-button"
+                                          title="Edit VirtualHost"
+                                          onClick={() => void handleOpenEditVHost(host.domain)}
+                                      >
+                                        <Pencil size={16} />
+                                      </button>
+                                      <button
+                                          title="Enable"
+                                          className="icon-button green-icon"
+                                          onClick={() => void handleVHostAction(host.domain, 'enable')}
+                                      >
+                                        <Power size={16} />
+                                      </button>
+
+                                      <button
+                                          title="Disable"
+                                          className="icon-button"
+                                          onClick={() => void handleVHostAction(host.domain, 'disable')}
+                                      >
+                                        <PowerOff size={16} />
+                                      </button>
+
+                                      <button
+                                          title="Delete"
+                                          className="icon-button red-icon"
+                                          onClick={() => void handleVHostAction(host.domain, 'delete')}
+                                      >
+                                        <Trash2 size={16} />
+                                      </button>
+
+                                      <button
+                                          title="View backups"
+                                          className="icon-button"
+                                          onClick={() => {
+                                            setSelectedDomain(host.domain)
+                                            setPage('backups')
+                                          }}
+                                      >
+                                        <Archive size={16} />
+                                      </button>
+                                    </>
+                                ) : (
+                                    <span className="pill">Read only</span>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                      )
+                    })}
                     </tbody>
                   </table>
                 </div>
@@ -485,6 +604,84 @@ function App() {
           </section>
         )}
       </main>
+      {editingVHost && (
+          <div
+              className="modal-overlay"
+              onClick={() => {
+                if (!editSaving) setEditingVHost(null)
+              }}
+          >
+            <div
+                className="modal-card"
+                onClick={event => event.stopPropagation()}
+            >
+              <div className="modal-header">
+                <div>
+                  <h2>Edit VirtualHost</h2>
+                  <p>{editingVHost.domain}</p>
+                </div>
+
+                <button
+                    className="icon-button"
+                    type="button"
+                    disabled={editSaving}
+                    onClick={() => setEditingVHost(null)}
+                >
+                  ×
+                </button>
+              </div>
+
+              {editLoading ? (
+                  <div className="empty-state">
+                    Loading VirtualHost details...
+                  </div>
+              ) : (
+                  <form onSubmit={handleSaveEditVHost}>
+                    <label>Document Root</label>
+                    <input
+                        value={editDocumentRoot}
+                        onChange={event => setEditDocumentRoot(event.target.value)}
+                        placeholder="/var/www/example.com"
+                        required
+                        disabled={editSaving}
+                    />
+
+                    <label>Server Aliases</label>
+                    <textarea
+                        value={editServerAliases}
+                        onChange={event => setEditServerAliases(event.target.value)}
+                        placeholder={'www.example.com\nblog.example.com'}
+                        rows={4}
+                        disabled={editSaving}
+                    />
+
+                    <p className="modal-hint">
+                      Enter one alias per line or separate aliases with spaces or commas.
+                    </p>
+
+                    <div className="modal-actions">
+                      <button
+                          type="button"
+                          className="secondary"
+                          disabled={editSaving}
+                          onClick={() => setEditingVHost(null)}
+                      >
+                        Cancel
+                      </button>
+
+                      <button
+                          type="submit"
+                          className="primary"
+                          disabled={editSaving}
+                      >
+                        {editSaving ? 'Saving...' : 'Save Changes'}
+                      </button>
+                    </div>
+                  </form>
+              )}
+            </div>
+          </div>
+      )}
     </div>
   )
 }

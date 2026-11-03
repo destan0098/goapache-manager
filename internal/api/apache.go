@@ -355,6 +355,45 @@ func (a *ApacheAPI) EditVHost(w http.ResponseWriter, r *http.Request) {
 		"output":  resultOutput(result),
 	})
 }
+func (a *ApacheAPI) VHostDetails(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.CurrentUser(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if user.Role != "admin" && user.Role != "operator" {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	domain := chi.URLParam(r, "domain")
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	result, err := a.Helper.GetVHost(ctx, domain)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var details struct {
+		Domain        string   `json:"domain"`
+		DocumentRoot  string   `json:"document_root"`
+		ServerAliases []string `json:"server_aliases"`
+	}
+
+	if err := json.Unmarshal([]byte(result.Output), &details); err != nil {
+		http.Error(w, "Invalid VirtualHost data from helper", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"vhost":   details,
+	})
+}
 func (a *ApacheAPI) DeleteVHost(w http.ResponseWriter, r *http.Request) {
 	user, ok := auth.CurrentUser(r)
 	if !ok {

@@ -130,6 +130,15 @@ func (c *Client) DeleteVHostBackup(
 		BackupID: backupID,
 	})
 }
+func (c *Client) GetVHost(
+	ctx context.Context,
+	domain string,
+) (*Response, error) {
+	return c.executeRequest(ctx, Request{
+		Action: "apache.vhost.get",
+		Domain: domain,
+	})
+}
 
 func (c *Client) executeRequest(
 	ctx context.Context,
@@ -150,6 +159,7 @@ func (c *Client) executeRequest(
 		"apache.vhost.backups.list":   true,
 		"apache.vhost.backup.restore": true,
 		"apache.vhost.backup.delete":  true,
+		"apache.vhost.get":            true,
 	}
 
 	if !allowed[request.Action] {
