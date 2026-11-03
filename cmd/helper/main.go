@@ -984,15 +984,15 @@ func restoreVHostBackup(ctx context.Context, domain, backupID string) (string, e
 		return "", err
 	}
 
-	if output, err := runApacheCommand(ctx, "apache2ctl", "-t"); err != nil {
+	if output, err := runApacheCommand(ctx, "-t"); err != nil {
 		rollback()
 		return "", fmt.Errorf("restore config test failed: %s: %w", output, err)
 	}
 
 	if enabled {
-		if output, err := runApacheCommand(ctx, "systemctl", "reload", "apache2"); err != nil {
+		if output, err := runSystemctl(ctx, "reload", "apache2"); err != nil {
 			rollback()
-			_, _ = runApacheCommand(context.Background(), "apache2ctl", "-t")
+			_, _ = runApacheCommand(context.Background(), "-t")
 			return "", fmt.Errorf("apache reload failed: %s: %w", output, err)
 		}
 	}
