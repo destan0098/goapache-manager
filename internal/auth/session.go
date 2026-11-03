@@ -3,10 +3,10 @@ package auth
 import (
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/hex"
-	"time"
-
 	"database/sql"
+	"encoding/hex"
+	"fmt"
+	"time"
 )
 
 type Session struct {
@@ -37,21 +37,21 @@ func CreateSession(
 
 	token, err := randomToken()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("generate session token: %w", err)
 	}
 
 	csrf, err := randomToken()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("generate csrf token: %w", err)
 	}
 
-	expires := time.Now().UTC().Add(1 * time.Hour)
+	expires := time.Now().UTC().Add(time.Hour)
 
 	_, err = db.Exec(`
-		INSERT INTO sessions
-		(user_id, token_hash, csrf_token, expires_at)
-		VALUES (?, ?, ?, ?)
-	`,
+        INSERT INTO sessions
+        (user_id, token_hash, csrf_token, expires_at)
+        VALUES (?, ?, ?, ?)
+    `,
 		userID,
 		tokenHash(token),
 		csrf,
@@ -59,7 +59,7 @@ func CreateSession(
 	)
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("insert session into database: %w", err)
 	}
 
 	return &Session{

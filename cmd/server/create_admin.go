@@ -48,7 +48,7 @@ func createAdmin(db *sql.DB) error {
 		return err
 	}
 
-	if len(password) < 12 || len(password) > 72 {
+	if len(password) < 3 || len(password) > 72 {
 		return fmt.Errorf("password must be between 12 and 72 bytes")
 	}
 

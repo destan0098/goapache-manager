@@ -3,11 +3,11 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"goapache-manager/internal/auth"
+	"log"
 	"net/http"
 	"strings"
 	"time"
-
-	"goapache-manager/internal/auth"
 )
 
 type AuthAPI struct {
@@ -56,7 +56,9 @@ func (a *AuthAPI) Login(
 	session, err := auth.CreateSession(a.DB, id)
 
 	if err != nil {
-		http.Error(w, "Could not create session", 500)
+		log.Printf("ERROR: CreateSession failed for user_id=%d: %v", id, err)
+
+		http.Error(w, "Could not create session", http.StatusInternalServerError)
 		return
 	}
 

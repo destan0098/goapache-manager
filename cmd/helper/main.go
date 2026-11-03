@@ -231,6 +231,10 @@ func execute(
 			path: "/usr/bin/systemctl",
 			args: []string{"restart", apacheService()},
 		},
+		"apache.vhosts.list": {
+			path: apacheControl(),
+			args: []string{"-S"},
+		},
 	}
 
 	cmdSpec, ok := commands[action]

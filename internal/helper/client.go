@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"time"
@@ -41,10 +42,11 @@ func (c *Client) Execute(
 ) (*Response, error) {
 
 	allowed := map[string]bool{
-		"apache.status":     true,
-		"apache.configtest": true,
-		"apache.reload":     true,
-		"apache.restart":    true,
+		"apache.status":      true,
+		"apache.configtest":  true,
+		"apache.reload":      true,
+		"apache.restart":     true,
+		"apache.vhosts.list": true,
 	}
 
 	if !allowed[action] {
@@ -80,7 +82,11 @@ func (c *Client) Execute(
 
 	var result Response
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	decoder := json.NewDecoder(
+		io.LimitReader(resp.Body, 64*1024),
+	)
+
+	if err := decoder.Decode(&result); err != nil {
 		return nil, err
 	}
 

@@ -41,6 +41,7 @@ func NewRouter(db *sql.DB) http.Handler {
 	r.Group(func(p chi.Router) {
 		p.Use(auth.RequireAuth(db))
 		p.Use(CSRF)
+		p.Get("/api/v1/apache/vhosts", apacheAPI.VHosts)
 
 		p.Post("/api/v1/auth/logout", authAPI.Logout)
 		p.Get("/api/v1/auth/me", authAPI.Me)
