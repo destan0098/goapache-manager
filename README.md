@@ -1,6 +1,6 @@
 # GoApache Manager
 
-**A lightweight web-based Apache HTTP Server VirtualHost management panel built with Go and React.**
+**Manage Apache VirtualHosts from a secure web dashboard — without manually editing configuration files or running Apache commands.**
 
 GoApache Manager provides a web interface for managing Apache VirtualHosts on Linux servers. It is designed to simplify common Apache administration tasks while keeping privileged operations isolated in a dedicated root helper process that talks to the web app over a locked-down Unix socket.
 
