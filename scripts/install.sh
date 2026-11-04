@@ -220,19 +220,112 @@ is_valid_domain() {
     [[ "$1" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$ ]]
 }
 
+is_local_domain() {
+    local domain="${1,,}"
+
+    case "$domain" in
+        *.localhost|*.test|*.invalid|*.example|*.local)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+configure_cookie_mode() {
+    local mode="$1"
+    local dropin_dir="/etc/systemd/system/goapache.service.d"
+    local dropin="$dropin_dir/90-goapache-cookie-mode.conf"
+
+    install -d -o root -g root -m 0755 "$dropin_dir"
+
+    if [[ "$mode" == "local" ]]; then
+        cat > "$dropin" <<'EOF'
+[Service]
+Environment="GOAPACHE_INSECURE_COOKIES=1"
+EOF
+    else
+        # Explicitly override older/manual insecure-cookie settings.
+        cat > "$dropin" <<'EOF'
+[Service]
+Environment="GOAPACHE_INSECURE_COOKIES="
+EOF
+    fi
+
+    chmod 0644 "$dropin"
+    chown root:root "$dropin"
+
+    systemctl daemon-reload
+    systemctl restart goapache
+
+    for attempt in $(seq 1 15); do
+        if curl -fsS --max-time 2 \
+            http://127.0.0.1:9090/api/v1/health >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+
+    journalctl -u goapache -n 30 --no-pager || true
+    fail "Backend did not restart after configuring cookie security."
+}
+
+add_local_hostname() {
+    local domain="$1"
+    local hosts_file="/etc/hosts"
+
+    # Check whether the hostname already exists in /etc/hosts.
+    if awk -v domain="$domain" '
+        {
+            for (i = 2; i <= NF; i++) {
+                if ($i ~ /^#/) break
+                if ($i == domain) {
+                    found = 1
+                    if ($1 == "127.0.0.1" || $1 == "::1") {
+                        valid = 1
+                    }
+                }
+            }
+        }
+        END {
+            if (found && valid) exit 0
+            if (found && !valid) exit 2
+            exit 1
+        }
+    ' "$hosts_file"; then
+        return 0
+    else
+        status=$?
+        if [[ "$status" -eq 2 ]]; then
+            fail "Domain $domain already exists in /etc/hosts with a non-loopback IP. Please fix it manually."
+        fi
+    fi
+
+    printf '\n127.0.0.1 %s # GoApache Manager local hostname: %s\n' \
+        "$domain" "$domain" >> "$hosts_file"
+}
+
 if [[ -z "$PANEL_DOMAIN" && -t 0 ]]; then
     echo
     echo "Enter the domain for the GoApache Manager panel."
-    echo "Example: panel.example.com"
-    echo "Leave empty to skip Apache virtual host configuration."
-    read -r -p "Panel domain: " PANEL_DOMAIN
+    echo "Default: goapache.test (local installation)"
+    echo "For a public domain, enter e.g. panel.example.com"
+    echo "Enter 'skip' to skip Apache virtual host configuration."
+    read -r -p "Panel domain [goapache.test]: " PANEL_DOMAIN
+fi
+
+if [[ -z "$PANEL_DOMAIN" ]]; then
+    PANEL_DOMAIN="goapache.test"
 fi
 
 PANEL_CONFIGURED=0
+LOCAL_PANEL=0
 
 case "${PANEL_DOMAIN,,}" in
-    ""|skip|no|none)
+    skip|no|none)
         log "Skipping panel virtual host configuration."
+        configure_cookie_mode "public"
         ;;
 
     *)
@@ -240,6 +333,23 @@ case "${PANEL_DOMAIN,,}" in
 
         is_valid_domain "$PANEL_DOMAIN" ||
             fail "Invalid panel domain: $PANEL_DOMAIN"
+
+        [[ "$PANEL_DOMAIN" != "localhost" ]] ||
+            fail "Do not use localhost as the panel domain. Use goapache.test instead."
+
+        if is_local_domain "$PANEL_DOMAIN"; then
+            LOCAL_PANEL=1
+            log "Local domain detected: $PANEL_DOMAIN"
+            add_local_hostname "$PANEL_DOMAIN"
+            configure_cookie_mode "local"
+            echo "Local hostname: configured"
+            echo "HTTP cookies: configured for local access"
+        else
+            LOCAL_PANEL=0
+            log "Public domain detected: $PANEL_DOMAIN"
+            configure_cookie_mode "public"
+            echo "Secure session cookies: enabled"
+        fi
 
         log "Configuring panel virtual host: $PANEL_DOMAIN"
 
@@ -435,16 +545,24 @@ fi
 echo
 
 if [[ "$PANEL_CONFIGURED" -eq 1 ]]; then
-    echo "Panel domain: http://$PANEL_DOMAIN"
-    echo
-    echo "IMPORTANT: HTTPS is required for secure session cookies."
-    echo "After pointing DNS to this server, install TLS with:"
-    echo "sudo apt install -y certbot python3-certbot-apache"
-    echo "sudo certbot --apache -d $PANEL_DOMAIN"
-    echo
-    echo "Trusted LAN over plain HTTP (no TLS)? Allow non-Secure cookies with:"
-    echo "  sudo systemctl edit goapache  ->  [Service] Environment=GOAPACHE_INSECURE_COOKIES=1"
-    echo "  sudo systemctl restart goapache"
+    if [[ "$LOCAL_PANEL" -eq 1 ]]; then
+        echo "Panel URL: http://$PANEL_DOMAIN"
+        echo
+        echo "Local hostname configured in /etc/hosts."
+        echo "Insecure cookies enabled for local HTTP access."
+        echo "Open this URL in your browser on this machine."
+    else
+        echo "Panel URL: http://$PANEL_DOMAIN"
+        echo
+        echo "IMPORTANT: Configure HTTPS before logging in."
+        echo "Secure session cookies are enabled."
+        echo
+        echo "After pointing DNS to this server, install TLS with:"
+        echo "sudo apt install -y certbot python3-certbot-apache"
+        echo "sudo certbot --apache -d $PANEL_DOMAIN"
+        echo
+        echo "After TLS setup, open: https://$PANEL_DOMAIN"
+    fi
 else
     echo "Panel virtual host: not configured."
     echo "Re-run with:"

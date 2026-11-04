@@ -1,3 +1,5 @@
 .idea
 /cookies.txt
 frontend/node_modules
+/scripts/install.sh.backup
+/frontend/dist/
