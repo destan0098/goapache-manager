@@ -2,6 +2,7 @@ package api
 
 import (
 	"database/sql"
+	"log"
 	"net/http"
 	"time"
 
@@ -19,7 +20,16 @@ func NewRouter(db *sql.DB) http.Handler {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(45 * time.Second))
 
-	authAPI := &AuthAPI{DB: db}
+	authAPI := &AuthAPI{
+		DB:              db,
+		InsecureCookies: insecureCookies(),
+	}
+
+	if authAPI.InsecureCookies {
+		log.Printf(
+			"WARNING: GOAPACHE_INSECURE_COOKIES is enabled; session cookies are sent without the Secure flag. Use this only over trusted local networks, never on the public internet.",
+		)
+	}
 
 	apacheAPI := &ApacheAPI{
 		Helper: helper.NewClient(

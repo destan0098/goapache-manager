@@ -441,6 +441,10 @@ if [[ "$PANEL_CONFIGURED" -eq 1 ]]; then
     echo "After pointing DNS to this server, install TLS with:"
     echo "sudo apt install -y certbot python3-certbot-apache"
     echo "sudo certbot --apache -d $PANEL_DOMAIN"
+    echo
+    echo "Trusted LAN over plain HTTP (no TLS)? Allow non-Secure cookies with:"
+    echo "  sudo systemctl edit goapache  ->  [Service] Environment=GOAPACHE_INSECURE_COOKIES=1"
+    echo "  sudo systemctl restart goapache"
 else
     echo "Panel virtual host: not configured."
     echo "Re-run with:"

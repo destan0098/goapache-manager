@@ -6,12 +6,28 @@ import (
 	"goapache-manager/internal/auth"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
 
 type AuthAPI struct {
 	DB *sql.DB
+
+	// InsecureCookies disables the Secure flag on session cookies.
+	// Only enable it (GOAPACHE_INSECURE_COOKIES=1) when the panel is
+	// reached over plain HTTP on a trusted local network.
+	InsecureCookies bool
+}
+
+// insecureCookies reports whether the GOAPACHE_INSECURE_COOKIES
+// environment variable explicitly enables non-Secure cookies.
+func insecureCookies() bool {
+	value := strings.ToLower(strings.TrimSpace(
+		os.Getenv("GOAPACHE_INSECURE_COOKIES"),
+	))
+
+	return value == "1" || value == "true" || value == "yes"
 }
 
 type loginRequest struct {
@@ -67,7 +83,7 @@ func (a *AuthAPI) Login(
 		Value:    session.Token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   !a.InsecureCookies,
 		SameSite: http.SameSiteStrictMode,
 		Expires:  session.ExpiresAt,
 	})
@@ -77,7 +93,7 @@ func (a *AuthAPI) Login(
 		Value:    session.CSRFToken,
 		Path:     "/",
 		HttpOnly: false,
-		Secure:   true,
+		Secure:   !a.InsecureCookies,
 		SameSite: http.SameSiteStrictMode,
 		Expires:  session.ExpiresAt,
 	})
@@ -108,7 +124,7 @@ func (a *AuthAPI) Logout(
 			Path:     "/",
 			MaxAge:   -1,
 			HttpOnly: name == "goapache_session",
-			Secure:   true,
+			Secure:   !a.InsecureCookies,
 			SameSite: http.SameSiteStrictMode,
 		})
 	}

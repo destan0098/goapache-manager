@@ -82,7 +82,7 @@ Three components are installed on the server:
 - Root / sudo access on the server
 - A domain name with a DNS A/AAAA record pointing to the server, **recommended** (required for the default HTTPS setup — see the note below)
 
-> **HTTPS is required.** Login cookies are `Secure`, so browsers refuse to store them over plain HTTP (except on `localhost`). If your panel is reachable over `http://` from anywhere but localhost, you will not be able to log in. You can either [enable HTTPS with certbot](#step-8--enable-https-required) or [reach the panel through an SSH tunnel](#access-without-a-domain-ssh-tunnel).
+> **HTTPS is required by default.** Login cookies are `Secure`, so browsers refuse to store them over plain HTTP (except on `localhost`). If your panel is reachable over `http://` from anywhere but localhost, you will not be able to log in — use [HTTPS with certbot](#step-5--enable-https-required), an [SSH tunnel](#access-without-a-domain-ssh-tunnel), or, on a trusted LAN only, the [plain-HTTP opt-in](#plain-http-on-a-trusted-lan-opt-in).
 
 ## Installation
 
@@ -210,7 +210,7 @@ Manually, the steps above are equivalent to installing `packaging/systemd/goapac
 
 `FallbackResource` makes client-side routes work (e.g. refreshing on a sub-page). If Apache's default site answers instead, give the panel vhost a unique `ServerName`, or disable the default: `sudo a2dissite 000-default && sudo systemctl reload apache2`.
 
-### Step 5 — Enable HTTPS (required)
+### Step 5 — Enable HTTPS (recommended, required by default)
 
 Browsers reject the panel's `Secure` session cookie over plain HTTP, so a certificate is effectively mandatory for any non-localhost access. With a domain and DNS in place:
 
@@ -235,6 +235,27 @@ If you have no domain, keep the port-80 panel VirtualHost and tunnel it. Browser
 ssh -L 8080:127.0.0.1:80 user@your-server
 # then open http://localhost:8080 in your local browser
 ```
+
+#### Plain HTTP on a trusted LAN (opt-in)
+
+If the panel is only reachable from a trusted local network over plain HTTP (e.g. `http://goapache.local`) and you cannot use TLS, you can allow non-`Secure` cookies:
+
+```bash
+sudo systemctl edit goapache
+```
+
+```ini
+[Service]
+Environment=GOAPACHE_INSECURE_COOKIES=1
+```
+
+```bash
+sudo systemctl restart goapache
+```
+
+Or, for a manual run: `GOAPACHE_INSECURE_COOKIES=1 ./goapache`.
+
+Without this, login returns `{"success":true,...}` but every following request fails with `401 Unauthorized`, because the browser discards the `Secure` cookie sent over HTTP. **Never enable this on a panel exposed to the internet** — use HTTPS there.
 
 ### Step 6 — First login
 
@@ -272,6 +293,7 @@ The UI has three pages (left sidebar):
 | Setting | Where | Notes |
 |---|---|---|
 | Backend listen address | hardcoded `127.0.0.1:9090` | Not configurable in the current release; keep it loopback-only and proxy via Apache |
+| Cookie `Secure` flag | env `GOAPACHE_INSECURE_COOKIES` | Default off (session cookies are `Secure`). Set `1` only for trusted plain-HTTP/LAN access |
 | Database path | env `GOAPACHE_DB` | Defaults to `/var/lib/goapache/goapache.db` |
 | Database pragmas | built-in | WAL mode, foreign keys on, 5 s busy timeout |
 | Session lifetime | built-in | 1 hour; cookies `HttpOnly`/`Secure`/`SameSite=Strict` |
@@ -285,7 +307,7 @@ The systemd units are hardened: the backend runs as `goapache` with `ProtectSyst
 
 Before deploying:
 
-- **Always use HTTPS.** Session cookies are `Secure`; plain HTTP will silently break login.
+- **Always use HTTPS.** Session cookies are `Secure`; plain HTTP will silently break login. Never set `GOAPACHE_INSECURE_COOKIES=1` on a panel reachable from the internet.
 - **Never expose port 9090.** The backend binds to loopback by design — do not add firewall rules or reverse proxies that publish it, and do not change the bind address.
 - **The helper is root.** It only accepts connections from the `goapache` UID on a `0660 root:goapache` socket and executes a fixed allow-list of operations. Still, run it only on trusted servers and keep the host patched.
 - Restrict access to the panel (firewall, VPN, or an allow-list via Apache `Require ip`) if it manages production sites.
@@ -339,7 +361,7 @@ VirtualHosts previously created by GoApache Manager are left in place; remove th
 |---|---|
 | `502 Bad Gateway` on `/api/*` | Backend down — `systemctl status goapache`, `journalctl -u goapache -n 50` |
 | Health check OK but login fails with 401 | Admin was never created (Step 4), or wrong credentials |
-| Login "succeeds" but you are bounced back / every API call returns 401 | You are on plain HTTP — cookies are `Secure`. Use HTTPS or the SSH tunnel |
+| Login returns `{"success":true,...}` but the UI shows **Unauthorized** / every API call gets 401 | The browser discarded the `Secure` session cookie because you are on plain HTTP. Use HTTPS, the SSH tunnel, or — trusted LAN only — set `GOAPACHE_INSECURE_COOKIES=1` (see Step 5) |
 | 403 "CSRF validation failed" | Stale/missing CSRF cookie — hard-refresh and log in again |
 | Apache actions fail with helper connection refused / socket missing | Helper not running — `systemctl status goapache-helper`, `journalctl -u goapache-helper` (first start creates `/run/goapache/helper.sock`) |
 | Helper exits with "goapache system user not found" | Installer was not run or user was deleted — re-run Step 4 / recreate the user |
