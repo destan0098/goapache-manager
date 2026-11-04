@@ -1,7 +1,9 @@
 [Unit]
 Description=GoApache Manager
-Documentation=https://example.invalid/goapache
-After=network.target
+Documentation=https://github.com/destan0098/goapache-manager
+
+After=network.target goapache-helper.service
+Requires=goapache-helper.service
 
 [Service]
 Type=simple
@@ -10,6 +12,8 @@ User=goapache
 Group=goapache
 
 WorkingDirectory=/opt/goapache
+
+Environment=GOAPACHE_DB=/var/lib/goapache/goapache.db
 
 ExecStart=/opt/goapache/goapache
 

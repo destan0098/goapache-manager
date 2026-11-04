@@ -1,10 +1,10 @@
 [Unit]
 Description=GoApache Privileged Helper
 After=local-fs.target
+Before=goapache.service
 
 [Service]
 Type=simple
-
 User=root
 Group=root
 
@@ -21,6 +21,10 @@ PrivateTmp=true
 
 ProtectSystem=strict
 ProtectHome=true
+
+ReadWritePaths=/etc/apache2/sites-available
+ReadWritePaths=/etc/apache2/sites-enabled
+ReadWritePaths=/var/www
 
 ProtectKernelTunables=true
 ProtectKernelModules=true

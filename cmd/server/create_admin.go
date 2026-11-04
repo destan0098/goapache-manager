@@ -48,8 +48,8 @@ func createAdmin(db *sql.DB) error {
 		return err
 	}
 
-	if len(password) < 3 || len(password) > 72 {
-		return fmt.Errorf("password must be between 12 and 72 bytes")
+	if len(password) < 8 || len(password) > 72 {
+		return fmt.Errorf("password must be between 8 and 72 bytes")
 	}
 
 	hash, err := bcrypt.GenerateFromPassword(
