@@ -8,3 +8,8 @@ frontend/node_modules
 /goapache
 /goapache-helper
 /dist/
+
+# Build outputs
+/goapache
+/goapache-helper
+/dist/
