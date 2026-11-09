@@ -1,5 +1,6 @@
 # GoApache Manager
-
+![Static Badge](https://img.shields.io/badge/Go-50%25-brightgreen)
+![Static Badge](https://img.shields.io/badge/React-50%25-brightred)
 **A secure, self-hosted web dashboard for managing Apache HTTP Server and VirtualHosts on Linux.**
 
 Manage Apache VirtualHosts, monitor services, validate configurations, and manage backups through a modern web interface — without manually editing configuration files or running Apache commands.
