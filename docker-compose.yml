@@ -1,0 +1,40 @@
+services:
+  goapache:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: goapache-backend
+
+    restart: unless-stopped
+
+    # Must match the host goapache UID:GID.
+    user: "${GOAPACHE_UID}:${GOAPACHE_GID}"
+
+    environment:
+      GOAPACHE_DB: /var/lib/goapache/goapache.db
+
+    ports:
+      - "127.0.0.1:9090:9090"
+
+    volumes:
+      # Persistent SQLite database on the host
+      - /var/lib/goapache:/var/lib/goapache
+
+      # Host helper socket directory
+      - /run/goapache:/run/goapache
+
+    security_opt:
+      - no-new-privileges:true
+
+    cap_drop:
+      - ALL
+
+    init: true
+
+    networks:
+      - goapache-network
+
+networks:
+  goapache-network:
+    driver: bridge

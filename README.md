@@ -1,28 +1,58 @@
 # GoApache Manager
-![Static Badge](https://img.shields.io/badge/Go-50%25-brightgreen)
-![Static Badge](https://img.shields.io/badge/React_TypeScript-36%25-blue)
-![Static Badge](https://img.shields.io/badge/Bash-14%25-red)
 
+![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)
+![Frontend](https://img.shields.io/badge/React-TypeScript-3178C6?logo=typescript&logoColor=white)
+![Platform](https://img.shields.io/badge/Platform-Linux-orange?logo=linux&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green)
+![Release](https://img.shields.io/github/v/release/destan0098/goapache-manager)
+![Stars](https://img.shields.io/github/stars/destan0098/goapache-manager?style=social)
 
 **A secure, self-hosted web dashboard for managing Apache HTTP Server and VirtualHosts on Linux.**
 
-Manage Apache VirtualHosts, monitor services, validate configurations, and manage backups through a modern web interface — without manually editing configuration files or running Apache commands.
+GoApache Manager is an open-source Apache administration panel built with Go, React, and TypeScript. It provides a web interface for managing Apache VirtualHosts, monitoring services, validating configurations, and managing configuration backups.
 
-GoApache Manager is an open-source Apache administration panel built with Go, React, and TypeScript. It is designed for Linux server administrators, developers, hosting providers, and anyone who wants a simpler way to manage Apache HTTP Server.
+Instead of manually editing Apache configuration files or running commands in a terminal, administrators can perform supported operations through a modern web dashboard.
 
-Instead of giving the web application unrestricted root privileges, GoApache Manager uses a separate privileged helper process that performs authorized system operations through a restricted Unix socket.
+GoApache Manager is designed for Linux server administrators, developers, hosting providers, and anyone who wants a simpler way to manage Apache HTTP Server.
 
-**No external management port needs to be exposed:** the frontend is served by Apache, while the Go backend listens on `127.0.0.1:9090` and receives API requests through Apache's reverse proxy.
+**Security is a core part of its architecture:** the web backend runs as an unprivileged system user, while a separate root-privileged helper performs authorized system operations through a restricted Unix domain socket.
+
+The backend listens on `127.0.0.1:9090`. Apache serves the frontend and proxies API requests to the backend. The management API is not intended to be exposed directly to the public internet.
 
 ---
-
-
-
-*GoApache Manager web dashboard.*
 
 ## Screenshots
 
 ![GoApache Manager Dashboard](screenshot.png)
+
+---
+
+## Table of Contents
+
+- [Key Features](#key-features)
+- [Quick Start](#quick-start)
+- [Supported Platforms](#supported-platforms)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Automated Release Build](#automated-release-build)
+- [What the Installer Does](#what-the-installer-does)
+- [HTTPS Configuration](#https-configuration)
+- [How It Works](#how-it-works)
+- [Using the Panel](#using-the-panel)
+- [Configuration](#configuration)
+- [Docker Deployment](#docker-deployment)
+- [Security Considerations](#security-considerations)
+- [Upgrading](#upgrading)
+- [Uninstalling](#uninstalling)
+- [Troubleshooting](#troubleshooting)
+- [Frequently Asked Questions](#frequently-asked-questions)
+- [Technology Stack](#technology-stack)
+- [Project Structure](#project-structure)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [License](#license)
+- [Disclaimer](#disclaimer)
+
 ---
 
 ## Key Features
@@ -37,7 +67,7 @@ Instead of giving the web application unrestricted root privileges, GoApache Man
 - Edit DocumentRoot and ServerAliases.
 - Delete managed VirtualHost configurations.
 - Preserve DocumentRoot directories when deleting a VirtualHost.
-- Automatically back up configurations before operations that modify or replace them.
+- Automatically back up configurations before supported modifications.
 - Display the source configuration file for each VirtualHost.
 - Protect external configurations from accidental modification.
 
@@ -80,11 +110,11 @@ Instead of giving the web application unrestricted root privileges, GoApache Man
 
 ## Quick Start
 
-**Get started with a prebuilt release. No Go, Node.js, npm, or compiler is required.**
+**The recommended installation method is to use a prebuilt GitHub release. You do not need Go, Node.js, npm, or a compiler.**
 
 ### 1. Download the latest release
 
-Go to the GitHub Releases page:
+Visit the GitHub Releases page:
 
 [**Download GoApache Manager**](https://github.com/destan0098/goapache-manager/releases)
 
@@ -114,13 +144,13 @@ After installation, open the panel URL displayed by the installer.
 
 Create or use the administrator account configured during installation.
 
-**Important:** For production and public access, configure HTTPS before logging in.
+**Important:** Configure HTTPS before using the panel over a public network.
 
 ### Verify the downloaded package
 
 The release includes a SHA256 checksum file.
 
-Download both files and run:
+Download both the archive and its checksum file, then run:
 
 ```bash
 sha256sum -c goapache-manager-linux-amd64.tar.gz.sha256
@@ -151,7 +181,7 @@ The current implementation uses the Debian/Ubuntu Apache directory structure:
 - `/etc/apache2/sites-available/`
 - `/etc/apache2/sites-enabled/`
 
-The prebuilt release currently targets:
+### Current release target
 
 | Property | Value |
 |---|---|
@@ -161,6 +191,7 @@ The prebuilt release currently targets:
 | Backend | Go |
 | Frontend | React + TypeScript |
 | Database | SQLite |
+| Process management | systemd |
 
 ---
 
@@ -180,12 +211,13 @@ Install Apache if it is not already installed:
 
 ```bash
 sudo apt update
+
 sudo apt install -y apache2
 ```
 
 ### For building from source
 
-If you want to compile the project yourself, you also need:
+You also need:
 
 - Go 1.26 or later: https://go.dev/dl/
 - Node.js 22 or later: https://nodejs.org/
@@ -193,7 +225,7 @@ If you want to compile the project yourself, you also need:
 - Git.
 - GCC and build tools.
 
-Install the system dependencies:
+Install system dependencies:
 
 ```bash
 sudo apt update
@@ -221,14 +253,14 @@ The Go SQLite driver uses CGO, so a working C compiler is required when building
 
 ## Installation
 
-There are two installation methods:
+There are two supported installation methods:
 
 1. Install a prebuilt release — recommended for most users.
 2. Build and install from source — recommended for developers and contributors.
 
 ### Method 1 — Prebuilt Release
 
-Download the latest release from:
+Download the latest release:
 
 https://github.com/destan0098/goapache-manager/releases
 
@@ -323,13 +355,13 @@ The script:
 9. Creates a compressed `.tar.gz` archive.
 10. Generates a SHA256 checksum.
 
-The generated files are placed in:
+Generated files are placed in:
 
 ```text
 dist/
 ```
 
-For example:
+Example output:
 
 ```text
 dist/
@@ -387,7 +419,7 @@ It performs the following operations:
 | `/run/goapache/` | Helper runtime directory |
 | `/run/goapache/helper.sock` | Privileged helper Unix socket |
 
-### Systemd Services
+### systemd Services
 
 Two services are installed:
 
@@ -400,6 +432,7 @@ Check their status:
 
 ```bash
 sudo systemctl status goapache
+
 sudo systemctl status goapache-helper
 ```
 
@@ -586,47 +619,47 @@ The backend does not run as root. Instead, it communicates with a dedicated root
 ### Architecture
 
 ```text
-                  ┌──────────────────────────────────┐
-                  │             Browser              │
-                  │                                  │
-                  │       Web Dashboard (React)      │
-                  └────────────────┬─────────────────┘
-                                   │
-                                   │ HTTPS :443
-                                   ▼
-                  ┌──────────────────────────────────┐
-                  │              Apache              │
-                  │                                  │
-                  │  /       → Static frontend       │
-                  │  /api/*  → 127.0.0.1:9090        │
-                  └────────────────┬─────────────────┘
-                                   │
-                                   │ Loopback only
-                                   ▼
-                  ┌──────────────────────────────────┐
-                  │         goapache backend         │
-                  │             User: goapache       │
-                  │                                  │
-                  │  - Authentication                │
-                  │  - Sessions                      │
-                  │  - CSRF protection               │
-                  │  - JSON API                      │
-                  │  - Helper socket client         │
-                  └────────────────┬─────────────────┘
-                                   │
-                                   │ Unix domain socket
-                                   │ /run/goapache/helper.sock
-                                   ▼
-                  ┌──────────────────────────────────┐
-                  │        goapache-helper           │
-                  │              User: root          │
-                  │                                  │
-                  │  - Apache configuration changes  │
-                  │  - Apache service control        │
-                  │  - Backup operations             │
-                  │  - Configuration validation      │
-                  │  - Rollback operations            │
-                  └──────────────────────────────────┘
+                   ┌──────────────────────────────────┐
+                   │             Browser              │
+                   │                                  │
+                   │       Web Dashboard (React)      │
+                   └────────────────┬─────────────────┘
+                                    │
+                                    │ HTTPS :443
+                                    ▼
+                   ┌──────────────────────────────────┐
+                   │              Apache              │
+                   │                                  │
+                   │  /       → Static frontend       │
+                   │  /api/*  → 127.0.0.1:9090        │
+                   └────────────────┬─────────────────┘
+                                    │
+                                    │ Loopback only
+                                    ▼
+                   ┌──────────────────────────────────┐
+                   │         goapache backend         │
+                   │             User: goapache       │
+                   │                                  │
+                   │  - Authentication                │
+                   │  - Sessions                      │
+                   │  - CSRF protection               │
+                   │  - JSON API                      │
+                   │  - Helper socket client          │
+                   └────────────────┬─────────────────┘
+                                    │
+                                    │ Unix domain socket
+                                    │ /run/goapache/helper.sock
+                                    ▼
+                   ┌──────────────────────────────────┐
+                   │        goapache-helper           │
+                   │              User: root          │
+                   │                                  │
+                   │  - Apache configuration changes  │
+                   │  - Apache service control        │
+                   │  - Backup operations             │
+                   │  - Configuration validation      │
+                   │  - Rollback operations           │
+                   └──────────────────────────────────┘
 ```
 
 ### Application Components
@@ -830,6 +863,126 @@ The helper runs separately as root with its own runtime directory.
 
 ---
 
+## Docker Deployment
+
+<badge color="warning">Experimental architecture — not supported by the current release</badge>
+
+Docker deployment is being considered as an alternative deployment method.
+
+The current GoApache Manager installation is designed around the host operating system: it manages the host's Apache configuration, systemd services, and privileged operations.
+
+**Running the existing application in a normal Docker container does not automatically give it access to the host Apache server.**
+
+A containerized deployment therefore requires a design that preserves the separation between the web backend and the privileged host helper.
+
+### Recommended Architecture: Backend in Docker, Helper on the Host
+
+The recommended approach is a hybrid deployment:
+
+- Apache remains installed and runs on the host.
+- The frontend remains served by the host Apache.
+- The Go backend runs inside a Docker container.
+- The root helper remains a host-level systemd service.
+- The backend accesses the helper through a mounted Unix socket.
+- The SQLite database remains persistent on the host.
+
+```text
+                         Browser
+                            │
+                            ▼
+                  ┌──────────────────────┐
+                  │    Host Apache      │
+                  │                      │
+                  │  Frontend           │
+                  │  Reverse Proxy      │
+                  └──────────┬───────────┘
+                             │
+                             │ 127.0.0.1:9090
+                             ▼
+                  ┌──────────────────────┐
+                  │   Docker Container  │
+                  │                      │
+                  │   Go Backend        │
+                  │   User: goapache    │
+                  └──────────┬───────────┘
+                             │
+                             │ Mounted Unix Socket
+                             ▼
+                  ┌──────────────────────┐
+                  │    Host Helper      │
+                  │    User: root       │
+                  │                      │
+                  │  Apache operations  │
+                  │  systemd operations │
+                  │  Backup operations  │
+                  └──────────────────────┘
+```
+
+### Why Keep the Helper on the Host?
+
+The helper must operate on the host's Apache configuration and services.
+
+Putting the helper inside an ordinary container would mean it would normally see the container's filesystem and process environment rather than the host's.
+
+The recommended design keeps the privileged helper on the host and allows the backend to communicate with it through a Unix socket.
+
+### Requirements for a Docker-Compatible Release
+
+The current release is not yet ready for this deployment method. The following changes and tests are required:
+
+1. Make the backend listen address configurable so it can bind to `0.0.0.0:9090` inside the container.
+2. Keep the published host port bound to `127.0.0.1`, not a public interface.
+3. Ensure the container backend uses the correct numeric host UID and GID.
+4. Mount the host helper socket directory into the container.
+5. Persist the SQLite database outside the container.
+6. Verify socket permissions and `SO_PEERCRED` behavior.
+7. Test Docker user namespace configurations.
+8. Verify that the container can access the host helper without running as root.
+9. Test container restart behavior and helper socket recreation.
+10. Verify that database ownership and SQLite WAL files remain correct.
+
+### Important Security Rules
+
+A Docker implementation must not:
+
+- Run the backend container with `privileged: true`.
+- Run the backend as root unnecessarily.
+- Run the root helper inside the backend container.
+- Mount `/var/run/docker.sock` into the backend container.
+- Mount `/etc/apache2` as a writable volume into the backend container.
+- Expose the backend API directly to the public internet.
+- Bypass the helper's peer credential verification.
+
+### Docker Compose
+
+A Docker Compose configuration is planned for a future Docker-compatible release.
+
+The Compose deployment will need to provide:
+
+- A persistent database volume or host bind mount.
+- Access to the host helper socket.
+- A non-root backend user with the correct host UID/GID.
+- A loopback-only published backend port.
+- Container security restrictions.
+
+**Do not use an unverified Compose configuration with the current release.** The backend listener configuration and host-helper integration must be implemented and tested first.
+
+### Native vs Docker Deployment
+
+| Feature | Native installation | Proposed Docker deployment |
+|---|---|---|
+| Backend | Host systemd service | Docker container |
+| Frontend | Host Apache | Host Apache |
+| Helper | Host systemd service | Host systemd service |
+| Apache management | Host Apache | Host Apache |
+| Database | Host filesystem | Persistent host storage |
+| Installation | Supported | Planned |
+| Production readiness | Current deployment method | Not yet supported |
+
+For production systems, use the native installation method until Docker support is officially implemented and documented.
+
+---
+
 ## Security Considerations
 
 GoApache Manager can modify Apache configurations and control the Apache service. Treat it as a privileged server administration tool.
@@ -920,7 +1073,9 @@ Download the latest release from:
 
 https://github.com/destan0098/goapache-manager/releases
 
-For an installation built from source, update the repository:
+### Upgrade a Source Installation
+
+Update the repository:
 
 ```bash
 cd goapache-manager
@@ -954,9 +1109,15 @@ Run the installer without changing the existing panel VirtualHost:
 sudo PANEL_DOMAIN=skip SKIP_ADMIN=1 bash scripts/install.sh
 ```
 
-For a prebuilt release, extract the new release package and run the installer from the extracted directory:
+### Upgrade a Prebuilt Installation
+
+Extract the new release package and run the installer from the extracted directory:
 
 ```bash
+tar -xzf goapache-manager-linux-amd64.tar.gz
+
+cd goapache-manager-linux-amd64
+
 sudo PANEL_DOMAIN=skip SKIP_ADMIN=1 bash scripts/install.sh
 ```
 
@@ -984,13 +1145,15 @@ Always keep a separate backup of important server configuration and database fil
 
 The following commands remove GoApache Manager services and application files.
 
-Stop and disable the services:
+**Review each command before running it.** These commands modify the host system.
+
+### 1. Stop and disable the services
 
 ```bash
 sudo systemctl disable --now goapache goapache-helper
 ```
 
-Remove the systemd units:
+### 2. Remove the systemd units
 
 ```bash
 sudo rm -f /etc/systemd/system/goapache.service
@@ -1000,7 +1163,9 @@ sudo rm -f /etc/systemd/system/goapache-helper.service
 sudo systemctl daemon-reload
 ```
 
-Remove application files:
+If you created systemd override files, review and remove them separately.
+
+### 3. Remove application files
 
 ```bash
 sudo rm -rf /opt/goapache
@@ -1010,7 +1175,9 @@ sudo rm -rf /var/www/goapache
 sudo rm -rf /etc/goapache
 ```
 
-Remove the panel VirtualHost if it was created by the installer:
+### 4. Remove the panel VirtualHost
+
+Only do this if it was created by the installer and you no longer need it:
 
 ```bash
 sudo rm -f /etc/apache2/sites-available/goapache.conf
@@ -1026,7 +1193,7 @@ sudo apache2ctl configtest
 sudo systemctl reload apache2
 ```
 
-### Optional: Remove Application Data
+### 5. Optional: Remove Application Data
 
 **Warning:** The following commands permanently delete the application database, backups, and logs.
 
@@ -1038,7 +1205,7 @@ sudo rm -rf /var/lib/goapache
 sudo rm -rf /var/log/goapache
 ```
 
-Remove the system account and group:
+### 6. Remove the system account and group
 
 ```bash
 sudo userdel goapache
@@ -1098,9 +1265,9 @@ Expected response:
 {"status":"ok"}
 ```
 
-### Login succeeds but the next request returns 401 Unauthorized
+### Login Succeeds but the Next Request Returns 401 Unauthorized
 
-**Possible causes:**
+Possible causes:
 
 - The browser discarded the Secure session cookie because the panel is accessed over plain HTTP.
 - The cookie is not being sent by the browser.
@@ -1294,6 +1461,14 @@ The backend listens on the loopback interface and Apache proxies API requests to
 
 The helper communicates over a local Unix socket.
 
+### Can I run GoApache Manager with Docker?
+
+Docker deployment is planned, but the current release is designed for native installation.
+
+The proposed Docker architecture keeps Apache and the privileged helper on the host while running the Go backend in a container.
+
+See [Docker Deployment](#docker-deployment) for the architecture and requirements.
+
 ---
 
 ## Technology Stack
@@ -1397,6 +1572,9 @@ The project is actively evolving.
 - [ ] CI/CD release automation.
 - [ ] Additional Linux distribution support.
 - [ ] More detailed server resource monitoring.
+- [ ] Docker-compatible backend deployment.
+- [ ] Docker Compose deployment configuration.
+- [ ] Automated Docker deployment tests.
 
 ---
 
