@@ -16,14 +16,13 @@ Instead of giving the web application unrestricted root privileges, GoApache Man
 
 ---
 
-## Screenshots
 
-![GoApache Manager Dashboard](screenshot.png)
 
 *GoApache Manager web dashboard.*
 
-> More screenshots and interface previews will be added as the project evolves.
+## Screenshots
 
+![GoApache Manager Dashboard](screenshot.png)
 ---
 
 ## Key Features
