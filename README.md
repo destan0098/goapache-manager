@@ -21,6 +21,7 @@ The backend listens on `127.0.0.1:9090`. Apache serves the frontend and proxies 
 
 ---
 
+
 ## Screenshots
 
 ![GoApache Manager Dashboard](screenshot.png)
